@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>x402eCash — x402 on XEC, Tonalli &amp; Agent Payments</title>
+  <meta name="description" content="Public xolosArmy Network laboratory exploring x402 payments on eCash (XEC), Tonalli Wallet, paid APIs, agent-to-agent payments and autonomous machine commerce.">
+  <meta name="theme-color" content="#07090d">
+  <meta name="color-scheme" content="dark">
+  <link rel="canonical" href="https://x402.ecash.mx/">
+  <link rel="alternate" hreflang="en" href="https://x402.ecash.mx/">
+  <link rel="alternate" hreflang="es" href="https://x402.ecash.mx/es/">
+  <link rel="alternate" hreflang="x-default" href="https://x402.ecash.mx/">
+  <link rel="icon" href="/assets/x402ecash-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="x402eCash">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:locale:alternate" content="es_MX">
+  <meta property="og:url" content="https://x402.ecash.mx/">
+  <meta property="og:title" content="x402eCash — Public Lab for x402 on XEC">
+  <meta property="og:description" content="Evidence-led research on XEC payments, Tonalli authorization, paid APIs and policy-controlled agents.">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="x402eCash — Public Lab for x402 on XEC">
+  <meta name="twitter:description" content="Evidence-led research on XEC payments, Tonalli authorization, paid APIs and policy-controlled agents.">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "x402eCash",
+    "alternateName": "Public Lab for x402 on XEC",
+    "url": "https://x402.ecash.mx/",
+    "description": "Public xolosArmy Network laboratory exploring x402 payments on eCash, Tonalli Wallet, paid APIs and agent payments.",
+    "inLanguage": ["en", "es"],
+    "publisher": {
+      "@type": "Organization",
+      "name": "xolosArmy Network",
+      "url": "https://github.com/xolosArmy"
+    },
+    "dateModified": "2026-08-25"
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="#top" aria-label="x402eCash home">
+        <img src="/assets/x402ecash-mark.svg" alt="" width="40" height="40">
+        <span><span class="brand-x">x402</span><span class="brand-cash">eCash</span></span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>Menu</button>
+      <nav class="site-nav" id="site-nav" aria-label="Primary navigation" data-nav>
+        <a href="#protocol">Protocol</a>
+        <a href="#work">Built</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#status">Status</a>
+        <a href="#roadmap">Roadmap</a>
+        <a href="#evidence">Evidence</a>
+        <a class="language-link" href="/es/" lang="es" hreflang="es">ES</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <div class="container hero-grid">
+        <div>
+          <div class="lab-badge">Experimental public laboratory</div>
+          <p class="eyebrow">xolosArmy Network · Build in public</p>
+          <h1 id="hero-title"><span class="title-x">x402</span><span class="title-cash">eCash</span></h1>
+          <p class="hero-subtitle">Public Lab for x402 on XEC</p>
+          <p class="hero-copy">Exploring machine-native commerce on eCash: HTTP 402 payments, Tonalli authorization, paid APIs and policy-controlled autonomous agents.</p>
+          <ul class="tag-list" aria-label="Research areas">
+            <li>XEC</li>
+            <li>Tonalli</li>
+            <li>Agent-to-Agent Payments</li>
+            <li>Paid APIs</li>
+            <li>Autonomous Economy</li>
+          </ul>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#evidence">Inspect the evidence</a>
+            <a class="button button-secondary" href="https://github.com/xolosArmy/x402eCash">View project on GitHub ↗</a>
+          </div>
+        </div>
+
+        <aside class="hero-console" aria-label="Current laboratory status">
+          <img class="hero-mark" src="/assets/x402ecash-mark.svg" alt="Geometric xoloitzcuintle circuit mark" width="94" height="94">
+          <div class="console-label">Lab state</div>
+          <div class="console-row"><span>HTTP 402 scaffold</span><span class="console-value tested">TESTED</span></div>
+          <div class="console-row"><span>Tonalli authorization</span><span class="console-value tested">DRY RUN</span></div>
+          <div class="console-row"><span>Automatic mainnet payment</span><span class="console-value off">OFF</span></div>
+          <div class="console-row"><span>Agent real-fund execution</span><span class="console-value off">FROZEN</span></div>
+          <div class="console-row"><span>Protocol alignment</span><span class="console-value">V2 PENDING</span></div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section section-border" id="protocol" aria-labelledby="protocol-title">
+      <div class="container">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Protocol primer</p>
+            <h2 id="protocol-title">What is x402?</h2>
+          </div>
+          <p>x402 is an open, transport-agnostic internet payment standard. Version 2 separates core payment types and logic from their representation over transports such as HTTP, MCP and A2A.</p>
+        </div>
+
+        <div class="flow-grid" aria-label="Typical x402 payment flow">
+          <article class="flow-step"><h3>Request</h3><p>A client or agent requests a protected resource.</p></article>
+          <article class="flow-step"><h3>Requirements</h3><p>The resource server signals payment requirements, including acceptable scheme, network, amount, asset and destination.</p></article>
+          <article class="flow-step"><h3>Payload</h3><p>The client selects an accepted option and creates the appropriate signed payment payload.</p></article>
+          <article class="flow-step"><h3>Retry</h3><p>The client retries through the transport with payment information attached.</p></article>
+          <article class="flow-step"><h3>Verify &amp; settle</h3><p>The resource server verifies locally or through a facilitator and follows the selected scheme's settlement flow.</p></article>
+          <article class="flow-step"><h3>Return resource</h3><p>After successful processing, the protected result and settlement response can be returned.</p></article>
+        </div>
+        <p class="source-note">Protocol language follows the official <a href="https://github.com/x402-foundation/x402/blob/f8a3682de3e65d18670bd837212ed49985094e13/specs/x402-specification-v2.md">x402 v2 specification at the inspected commit</a>. x402-XEC currently uses v1-era shapes; this site does not present them as v2-compatible yet.</p>
+      </div>
+    </section>
+
+    <section class="section section-border" id="why-xec" aria-labelledby="why-title">
+      <div class="container">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Research substrate</p>
+            <h2 id="why-title">Why XEC?</h2>
+          </div>
+          <p>The research question is practical: how can native UTXO money participate in machine-readable payment workflows while keeping authorization, policy and custody boundaries explicit?</p>
+        </div>
+        <div class="grid-3">
+          <article class="card"><span class="card-number">01</span><h3>Native UTXO money</h3><p>XEC provides a direct transaction model for studying exact-value, on-chain settlement without introducing a synthetic application balance.</p></article>
+          <article class="card"><span class="card-number">02</span><h3>Small-value economics</h3><p>eCash is relevant to micropayment-style experiments where the cost and operational shape of small transfers matter. No performance number is assumed here.</p></article>
+          <article class="card"><span class="card-number">03</span><h3>Read and verify</h3><p>Chronik supplies indexing and read interfaces for controlled UTXO discovery, transaction inspection and eventual confirmation evidence.</p></article>
+          <article class="card"><span class="card-number">04</span><h3>Wallet boundary</h3><p>Tonalli is the intended user-agent boundary: exact details are displayed, approval is explicit, and key material remains wallet-owned.</p></article>
+          <article class="card"><span class="card-number">05</span><h3>Policy before money</h3><p>The CAE and Agentic Contract V1 model intent, policy, human approval, signing, broadcast and confirmation as separate states.</p></article>
+          <article class="card"><span class="card-number">06</span><h3>Machine-native workflows</h3><p>HTTP, paid APIs and later MCP/A2A adapters provide a path to investigate commerce between software agents without pretending it is live today.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-border" id="work" aria-labelledby="work-title">
+      <div class="container">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Verified components</p>
+            <h2 id="work-title">What xolosArmy Network has already built</h2>
+          </div>
+          <p>Each card is scoped to repository evidence. “Implemented” means code exists at the linked revision; it does not automatically mean production deployment or live-fund execution.</p>
+        </div>
+
+        <div class="component-grid">
+          <article class="card component-card">
+            <span class="status status-implemented">Implemented · Experimental</span>
+            <h3>x402-XEC protocol scaffold</h3>
+            <p>Strict invoice and authorization schemas, deterministic resource binding, replay controls, local facilitator verification, Axios and Express adapters, offline payment preparation and transaction construction.</p>
+            <a class="evidence-link" href="https://github.com/xolosArmy/x402-XEC/tree/8696c28a609b0f788f8b2bd1bc52bf3e56c2f15f">Inspect x402-XEC at 8696c28</a>
+          </article>
+
+          <article class="card component-card">
+            <span class="status status-tested">Tested · Dry run</span>
+            <h3>Browser HTTP 402 dry-run</h3>
+            <p>The recorded flow received 402, requested mock approval, attached <code>PAYMENT-SIGNATURE</code>, retried and returned the protected resource. The result explicitly reports <code>broadcasted: false</code>.</p>
+            <a class="evidence-link" href="https://github.com/xolosArmy/x402-XEC/blob/8696c28a609b0f788f8b2bd1bc52bf3e56c2f15f/docs/browser-e2e-dry-run-result.md">Read the recorded result</a>
+          </article>
+
+          <article class="card component-card">
+            <span class="status status-tested">Integrated · Authorization dry run</span>
+            <h3>Tonalli authorization boundary</h3>
+            <p>Tonalli exposes an explicit approval modal and wallet-owned signing for the authorization message. The adapter rejects prepared-transaction signing as unsupported.</p>
+            <a class="evidence-link" href="https://github.com/xolosArmy/RMZWallet/blob/176fe40250b0465e1caf740b9b26c2eab11c899f/src/integrations/x402/TonalliBrowserWalletAdapter.ts">Inspect the Tonalli adapter</a>
+          </article>
+
+          <article class="card component-card">
+            <span class="status status-implemented">Implemented</span>
+            <h3>Agentic Contract V1</h3>
+            <p>A strict state machine separates intent, policy decision, wallet approval request, human approval, signed transaction, broadcast and confirmation. Optional x402 context is metadata—not permission.</p>
+            <a class="evidence-link" href="https://github.com/xolosArmy/tonalli-core/blob/cfe4cb1575b22ed258565717c000ac535aa98c67/docs/agentic-contract-v1.md">Read the canonical contract</a>
+          </article>
+
+          <article class="card component-card">
+            <span class="status status-frozen">Implemented · Money execution frozen</span>
+            <h3>CAE / Tonalli Agents</h3>
+            <p>Fail-closed decisions, kill switch, destination allowlists, cumulative daily limits and replay controls are implemented. Even an approved policy path stops before signing and broadcast.</p>
+            <a class="evidence-link" href="https://github.com/xolosArmy/tonalli-agents/blob/7b90c805c773e62efe525f88146dcd4ad0bfa028/docs/agentic-security-cycle-1.md">Inspect Cycle 1 security</a>
+          </article>
+
+          <article class="card component-card">
+            <span class="status status-pending">Adjacent experimental infrastructure</span>
+            <h3>Tonalli Commerce Relay</h3>
+            <p>Order, identity, reputation, evidence and dispute scaffolding explores a broader XEC commerce lifecycle. Real XEC escrow, broadcast and confirmation tracking remain pending.</p>
+            <a class="evidence-link" href="https://github.com/xolosArmy/tonalli-commerce-relay/blob/5a820dce7f5a9d6f46ecabf6eaf9a88c68309468/docs/PRODUCTION_READINESS.md">Read production-readiness boundaries</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-border" id="architecture" aria-labelledby="architecture-title">
+      <div class="container">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">System view</p>
+            <h2 id="architecture-title">Architecture with boundaries</h2>
+          </div>
+          <p>The diagram is a target integration map, not a live execution trace. Solid gold, solid blue and dashed neutral boundaries intentionally distinguish current evidence from integration and future real-money work.</p>
+        </div>
+
+        <div class="architecture-shell">
+          <div class="diagram">
+            <svg viewBox="0 0 820 1100" role="img" aria-labelledby="diagram-title diagram-desc">
+              <title id="diagram-title">x402eCash conceptual architecture</title>
+              <desc id="diagram-desc">A vertical flow from a human or AI agent through transport, x402 requirements, agent policy, Tonalli approval, x402-XEC planning and the eCash network. Colors identify built, integration and future boundaries.</desc>
+              <defs>
+                <marker id="arrow-gold" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#ff7a1a"/></marker>
+                <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#32c8ff"/></marker>
+                <marker id="arrow-muted" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#737e8f"/></marker>
+              </defs>
+
+              <path class="flow-integration" marker-end="url(#arrow-blue)" d="M410 108v36"/>
+              <path class="flow-future" marker-end="url(#arrow-muted)" d="M410 228v36"/>
+              <path class="flow-built" marker-end="url(#arrow-gold)" d="M410 348v36"/>
+              <path class="flow-built" marker-end="url(#arrow-gold)" d="M410 468v36"/>
+              <path class="flow-integration" marker-end="url(#arrow-blue)" d="M410 588v36"/>
+              <path class="flow-integration" marker-end="url(#arrow-blue)" d="M410 708v36"/>
+              <path class="flow-built" marker-end="url(#arrow-gold)" d="M410 828v36"/>
+              <path class="flow-future" marker-end="url(#arrow-muted)" d="M410 948v36"/>
+
+              <g><rect class="node-integration" x="120" y="24" width="580" height="84" rx="18"/><text class="node-title" x="410" y="61" text-anchor="middle">Human / AI Agent</text><text class="node-meta" x="410" y="86" text-anchor="middle">REQUEST + INTENT</text></g>
+              <g><rect class="node-integration" x="120" y="144" width="580" height="84" rx="18"/><text class="node-title" x="410" y="181" text-anchor="middle">HTTP · MCP · A2A</text><text class="node-meta" x="410" y="206" text-anchor="middle">HTTP TESTED · MCP/A2A PENDING</text></g>
+              <g><rect class="node-future" x="120" y="264" width="580" height="84" rx="18"/><text class="node-title" x="410" y="301" text-anchor="middle">x402 Resource</text><text class="node-meta" x="410" y="326" text-anchor="middle">PAID PRODUCTION API PENDING</text></g>
+              <g><rect class="node-built" x="120" y="384" width="580" height="84" rx="18"/><text class="node-title" x="410" y="421" text-anchor="middle">Payment Requirements</text><text class="node-meta" x="410" y="446" text-anchor="middle">V1-ERA XEC SCAFFOLD</text></g>
+              <g><rect class="node-built" x="120" y="504" width="580" height="84" rx="18"/><text class="node-title" x="410" y="541" text-anchor="middle">Agent Intent / CAE Policy</text><text class="node-meta" x="410" y="566" text-anchor="middle">FAIL-CLOSED CONTRACT V1</text></g>
+              <g><rect class="node-integration" x="120" y="624" width="580" height="84" rx="18"/><text class="node-title" x="410" y="661" text-anchor="middle">Tonalli Approval Boundary</text><text class="node-meta" x="410" y="686" text-anchor="middle">AUTHORIZATION DRY RUN</text></g>
+              <g><rect class="node-integration" x="120" y="744" width="580" height="84" rx="18"/><text class="node-title" x="410" y="781" text-anchor="middle">x402-XEC</text><text class="node-meta" x="410" y="806" text-anchor="middle">EXPERIMENTAL IMPLEMENTATION</text></g>
+              <g><rect class="node-built" x="120" y="864" width="580" height="84" rx="18"/><text class="node-title" x="410" y="901" text-anchor="middle">XEC Transaction Planning</text><text class="node-meta" x="410" y="926" text-anchor="middle">OFFLINE CONSTRUCTION IMPLEMENTED</text></g>
+              <g><rect class="node-future" x="120" y="984" width="580" height="84" rx="18"/><text class="node-title" x="410" y="1021" text-anchor="middle">Chronik / eCash Network</text><text class="node-meta" x="410" y="1046" text-anchor="middle">READ OPT-IN · LIVE SETTLEMENT PENDING</text></g>
+            </svg>
+          </div>
+
+          <aside class="card legend" aria-label="Architecture legend">
+            <div class="legend-item"><span class="legend-swatch legend-built"></span><div><strong>Implemented / tested</strong><p>Repository evidence exists for this boundary, within the stated scope.</p></div></div>
+            <div class="legend-item"><span class="legend-swatch legend-integration"></span><div><strong>Integration boundary</strong><p>Components meet here, but coverage is partial or authorization-only.</p></div></div>
+            <div class="legend-item"><span class="legend-swatch legend-future"></span><div><strong>Future / live-money boundary</strong><p>Not represented as complete or production-ready.</p></div></div>
+            <p class="boundary-note"><strong>Current hard stop:</strong> Tonalli's x402 adapter returns transaction signing as unsupported. No end-to-end arrow here proves a real XEC payment.</p>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-border" id="status" aria-labelledby="status-title">
+      <div class="container">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Evidence snapshot · 2026-08-25</p>
+            <h2 id="status-title">Status matrix</h2>
+          </div>
+          <p>Current source truth wins. “Pending” and “not enabled” are deliberate engineering statuses, not omissions hidden behind marketing language.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Current implementation status for x402eCash capabilities</caption>
+            <thead><tr><th scope="col">Capability</th><th scope="col">Status</th><th scope="col">Evidence / boundary</th></tr></thead>
+            <tbody>
+              <tr><td>HTTP 402 protocol scaffold for XEC</td><td><span class="table-status built">Experimental implementation</span></td><td><a href="https://github.com/xolosArmy/x402-XEC/tree/8696c28a609b0f788f8b2bd1bc52bf3e56c2f15f/packages">Package workspace</a></td></tr>
+              <tr><td>Core invoice and HTTP resource binding</td><td><span class="table-status built">Implemented</span></td><td><a href="https://github.com/xolosArmy/x402-XEC/blob/8696c28a609b0f788f8b2bd1bc52bf3e56c2f15f/docs/core-security-model.md">Canonical hash model</a></td></tr>
+              <tr><td>Replay protection</td><td><span class="table-status built">Implemented</span></td><td>Atomic nonce boundary; the in-memory store remains single-process.</td></tr>
+              <tr><td>Local facilitator verification</td><td><span class="table-status built">Implemented</span></td><td><a href="https://github.com/xolosArmy/x402-XEC/blob/8696c28a609b0f788f8b2bd1bc52bf3e56c2f15f/packages/x402-xec-facilitator/README.md">Fixture-backed default, real read adapter opt-in</a></td></tr>
+              <tr><td>Offline XEC transaction construction</td><td><span class="table-status built">Implemented</span></td><td><a href="https://github.com/xolosArmy/x402-XEC/blob/8696c28a609b0f788f8b2bd1bc52bf3e56c2f15f/packages/x402-xec-transactions/README.md">No network or broadcast API</a></td></tr>
+              <tr><td>Read-only Chronik adapters</td><td><span class="table-status built">Implemented · opt-in</span></td><td>Explicit endpoint required; fixtures remain the default.</td></tr>
+              <tr><td>Browser HTTP 402 E2E</td><td><span class="table-status tested">Tested in dry-run</span></td><td><code>broadcasted: false</code>; mock approval and signature.</td></tr>
+              <tr><td>Tonalli approval UI</td><td><span class="table-status built">Implemented</span></td><td><a href="https://github.com/xolosArmy/RMZWallet/blob/176fe40250b0465e1caf740b9b26c2eab11c899f/src/components/x402/TonalliPaymentApprovalModal.tsx">Exact public metadata is displayed</a></td></tr>
+              <tr><td>Tonalli authorization-message signing</td><td><span class="table-status tested">Dry-run integration</span></td><td>All-zero funding outpoint placeholder; no transaction created.</td></tr>
+              <tr><td>Real Tonalli transaction signing for x402</td><td><span class="table-status pending">Not yet proven</span></td><td><code>signPreparedTransaction</code> returns unsupported.</td></tr>
+              <tr><td>Automatic x402 mainnet payment</td><td><span class="table-status off">Not enabled</span></td><td>Broadcast is separate, opt-in and not wired to Axios or the demo.</td></tr>
+              <tr><td>Autonomous agent real-fund spending</td><td><span class="table-status off">Frozen</span></td><td><a href="https://github.com/xolosArmy/tonalli-agents/blob/7b90c805c773e62efe525f88146dcd4ad0bfa028/test/money-freeze.test.ts">Money-freeze tests</a></td></tr>
+              <tr><td>x402 v2 semantic alignment</td><td><span class="table-status pending">Pending</span></td><td>Current scaffold uses v1-era shapes and provisional <code>xec:mainnet</code>.</td></tr>
+              <tr><td>Standardized XEC network identifier</td><td><span class="table-status pending">Pending</span></td><td>Upstream v2 requires CAIP-2; inspected upstream support docs contain no XEC entry.</td></tr>
+              <tr><td>MCP transport integration</td><td><span class="table-status pending">Research / pending</span></td><td><a href="https://github.com/x402-foundation/x402/blob/f8a3682de3e65d18670bd837212ed49985094e13/specs/transports-v2/mcp.md">Upstream v2 transport reference</a></td></tr>
+              <tr><td>A2A payment integration</td><td><span class="table-status pending">Research / pending</span></td><td><a href="https://github.com/x402-foundation/x402/blob/f8a3682de3e65d18670bd837212ed49985094e13/specs/transports-v2/a2a.md">Upstream v2 transport reference</a></td></tr>
+              <tr><td>Paid production API</td><td><span class="table-status pending">Pending</span></td><td>This GitHub Pages portal is static and has no settlement backend.</td></tr>
+              <tr><td>Bazaar / discovery integration</td><td><span class="table-status pending">Pending</span></td><td><a href="https://github.com/x402-foundation/x402/blob/f8a3682de3e65d18670bd837212ed49985094e13/specs/extensions/bazaar.md">Upstream extension inspected</a></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-border" id="roadmap" aria-labelledby="roadmap-title">
+      <div class="container">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">No invented dates</p>
+            <h2 id="roadmap-title">Evidence-driven roadmap</h2>
+          </div>
+          <p>The ordering follows dependency and safety boundaries: modernize the protocol contract first, then prove signing and controlled settlement before adding paid services or agent transports.</p>
+        </div>
+
+        <div class="roadmap-grid">
+          <article class="card roadmap-card"><span class="roadmap-phase">A</span><h3>Protocol modernization</h3><ul><li>Compare x402-XEC with current x402 v2.</li><li>Migrate wire semantics where required.</li><li>Establish a standardized XEC network identifier and document the <code>(scheme, network)</code> pair.</li><li>Update compatibility and security tests.</li></ul></article>
+          <article class="card roadmap-card"><span class="roadmap-phase">B</span><h3>Tonalli execution boundary</h3><ul><li>Preserve explicit approval.</li><li>Add real prepared-transaction signing inside Tonalli.</li><li>Keep wallet secrets outside x402-XEC.</li><li>Bind invoice, resource, amount and <code>payTo</code> exactly.</li></ul></article>
+          <article class="card roadmap-card"><span class="roadmap-phase">C</span><h3>Controlled XEC E2E</h3><ul><li>Read-only UTXO discovery and deterministic plan.</li><li>Tiny controlled value with explicit approval.</li><li>Exact signing and separately authorized broadcast.</li><li>Chronik verification, confirmation and reproducible evidence.</li></ul></article>
+          <article class="card roadmap-card"><span class="roadmap-phase">D</span><h3>First paid API</h3><ul><li>Create a real x402-protected resource using XEC.</li><li>Deploy the settlement backend separately.</li><li>Keep this GitHub Pages portal honest about its static role.</li></ul></article>
+          <article class="card roadmap-card"><span class="roadmap-phase">E</span><h3>Agent payments</h3><ul><li>Connect <code>AgentIntentV1</code> to CAE.</li><li>Bind x402 requirements to Tonalli policy and approval.</li><li>Deliver the protected resource only after verified payment state.</li></ul></article>
+          <article class="card roadmap-card"><span class="roadmap-phase">F</span><h3>MCP / A2A</h3><ul><li>Track current upstream transport specifications.</li><li>Build adapters only after the v2 XEC scheme is stable.</li><li>Preserve the same policy and custody boundaries across transports.</li></ul></article>
+          <article class="card roadmap-card"><span class="roadmap-phase">G</span><h3>Discovery</h3><ul><li>Explore Bazaar metadata for XEC-paid resources.</li><li>Validate catalog claims against live evidence.</li><li>Publish no discoverable endpoint before the paid API exists.</li></ul></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-border" id="evidence" aria-labelledby="evidence-title">
+      <div class="container">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Build in public</p>
+            <h2 id="evidence-title">Evidence Ledger</h2>
+          </div>
+          <p>Milestones are classified as code, dry-run, staging authorization or frozen. A live classification requires transaction and network evidence; none is claimed below.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <caption class="sr-only">Dated x402eCash research evidence ledger</caption>
+            <thead><tr><th scope="col">Date</th><th scope="col">Milestone</th><th scope="col">Classification</th><th scope="col">Immutable evidence</th></tr></thead>
+            <tbody>
+              <tr><td>2026-07-01</td><td>Browser HTTP 402 flow completed with protected resource returned and <code>broadcasted: false</code>.</td><td><span class="ledger-class dry">Dry-run</span></td><td><a href="https://github.com/xolosArmy/x402-XEC/blob/8696c28a609b0f788f8b2bd1bc52bf3e56c2f15f/docs/browser-e2e-dry-run-result.md">Result</a> · <span class="ledger-meta">21f20d4 tested</span></td></tr>
+              <tr><td>2026-07-02</td><td>Tonalli browser wallet boundary added with explicit authorization approval and wallet-owned message signing.</td><td><span class="ledger-class code">Code</span></td><td><a href="https://github.com/xolosArmy/RMZWallet/commit/a743f9044a19b1bdca896760b2a70f2a72750e83">a743f904</a></td></tr>
+              <tr><td>2026-07-02</td><td>Tonalli payment approval modal added; approval does not transmit or pay a transaction.</td><td><span class="ledger-class code">Code</span></td><td><a href="https://github.com/xolosArmy/RMZWallet/commit/b74631b5eda6a2bf8dd235abe22c49abcdcb3628">b74631b5</a></td></tr>
+              <tr><td>2026-07-03</td><td>Trusted staging authorization route added with origin/path allowlisting and an authorization-only result.</td><td><span class="ledger-class dry">Staging authorization</span></td><td><a href="https://github.com/xolosArmy/RMZWallet/commit/4d5ee14685c68920fc97618c50988fe236947631">4d5ee146</a></td></tr>
+              <tr><td>2026-07-18</td><td>Commerce Relay documented order and trust scaffolding while real escrow and XEC broadcast remained pending.</td><td><span class="ledger-class dry">Adjacent scaffold</span></td><td><a href="https://github.com/xolosArmy/tonalli-commerce-relay/tree/5a820dce7f5a9d6f46ecabf6eaf9a88c68309468">5a820dce</a></td></tr>
+              <tr><td>2026-07-30</td><td>Agentic Contract V1 merged with strict intent-to-confirmation ordering and display-safe x402 handoff.</td><td><span class="ledger-class code">Code</span></td><td><a href="https://github.com/xolosArmy/tonalli-core/commit/cfe4cb1575b22ed258565717c000ac535aa98c67">cfe4cb15</a></td></tr>
+              <tr><td>2026-07-30</td><td>CAE Cycle 1 merged with fail-closed policy and explicit money-execution freeze.</td><td><span class="ledger-class frozen">Frozen</span></td><td><a href="https://github.com/xolosArmy/tonalli-agents/commit/7b90c805c773e62efe525f88146dcd4ad0bfa028">7b90c805</a></td></tr>
+              <tr><td>2026-08-25</td><td>Official x402 v2 specification and HTTP, MCP, A2A, CAIP-2 and Bazaar sources re-inspected for this portal.</td><td><span class="ledger-class dry">Upstream research</span></td><td><a href="https://github.com/x402-foundation/x402/tree/f8a3682de3e65d18670bd837212ed49985094e13/specs">f8a3682d</a></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin-top: 2.5rem; margin-bottom: 1rem;">Inspected repositories</h3>
+        <div class="repo-strip">
+          <a class="repo-link" href="https://github.com/xolosArmy/x402-XEC/tree/8696c28a609b0f788f8b2bd1bc52bf3e56c2f15f"><span>x402-XEC</span><span>8696c28</span></a>
+          <a class="repo-link" href="https://github.com/xolosArmy/RMZWallet/tree/176fe40250b0465e1caf740b9b26c2eab11c899f"><span>RMZWallet</span><span>176fe40</span></a>
+          <a class="repo-link" href="https://github.com/xolosArmy/tonalli-core/tree/cfe4cb1575b22ed258565717c000ac535aa98c67"><span>tonalli-core</span><span>cfe4cb1</span></a>
+          <a class="repo-link" href="https://github.com/xolosArmy/tonalli-agents/tree/7b90c805c773e62efe525f88146dcd4ad0bfa028"><span>tonalli-agents</span><span>7b90c80</span></a>
+          <a class="repo-link" href="https://github.com/xolosArmy/tonalli-commerce-relay/tree/5a820dce7f5a9d6f46ecabf6eaf9a88c68309468"><span>commerce-relay</span><span>5a820dc</span></a>
+          <a class="repo-link" href="https://github.com/x402-foundation/x402/tree/f8a3682de3e65d18670bd837212ed49985094e13"><span>x402 upstream</span><span>f8a3682</span></a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-border">
+      <div class="container closing-panel">
+        <div>
+          <p class="section-kicker">Research direction</p>
+          <h2>Evidence before autonomy.</h2>
+          <p>The next meaningful proof is not a dashboard counter. It is a v2-aligned, explicitly approved, tiny-value XEC payment with reproducible signing, broadcast and Chronik confirmation evidence.</p>
+        </div>
+        <a class="button button-primary" href="https://github.com/xolosArmy/x402eCash">Follow the lab ↗</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <p><strong>x402eCash</strong> is an experimental xolosArmy Network research project. Not every displayed architecture path is live, and real-fund automation is not represented as production-ready. Upstream names and specifications belong to their respective projects. No endorsement by x402 Foundation, Coinbase, eCash, Bitcoin ABC or other upstream projects is implied.</p>
+      <div class="footer-links">
+        <a href="https://github.com/xolosArmy/x402eCash">Repository</a>
+        <a href="https://github.com/x402-foundation/x402/blob/f8a3682de3e65d18670bd837212ed49985094e13/specs/x402-specification-v2.md">x402 v2 spec</a>
+        <a href="/es/" lang="es" hreflang="es">Español</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/script.js" defer></script>
+</body>
+</html>
