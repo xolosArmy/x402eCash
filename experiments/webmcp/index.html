@@ -58,7 +58,7 @@
           <div class="lab-badge">Static browser experiment</div>
           <p class="eyebrow">x402eCash · WebMCP Challenge</p>
           <h1 id="gate-title">Gate H3C — Tonalli Authorization Bridge</h1>
-          <p class="hero-subtitle">Validate the live requirement, cross the human boundary, and rendezvous with a short-lived Tonalli authorization proof.</p>
+          <p class="hero-subtitle">Validate the live requirement, return control to the agent, then let the page own the human decision and short-lived Tonalli authorization rendezvous.</p>
           <p class="truth-notice"><strong>No XEC payment occurs in Gate H3C.</strong> Tonalli signs an authorization-only proof. No transaction, PAYMENT-SIGNATURE, settlement, broadcast, or protected resource unlock occurs.</p>
 
           <div class="experiment-path" aria-label="Gate H3C target execution path">
@@ -81,7 +81,7 @@
             <span>STOP</span>
           </div>
 
-          <p class="agent-prompt">First invoke <code>get_paid_xec_resource</code>. After approving the validated 100 XEC requirement, the tool opens an authorization-only Tonalli handoff and returns <code>authorization_pending</code>. Later invoke <code>get_x402_authorization_result</code> to read the ephemeral result.</p>
+          <p class="agent-prompt">First invoke <code>get_paid_xec_resource</code>. It validates the 100 XEC requirement, creates an ephemeral page-owned approval session, and returns <code>approval_required</code> immediately. The human can decide afterward. Invoke <code>get_x402_authorization_result</code> to read the current approval or authorization state.</p>
         </div>
 
         <aside class="capability-panel" aria-labelledby="capability-title">
@@ -117,7 +117,7 @@
         <div class="approval-header">
           <p class="section-kicker">Human checkpoint</p>
           <h2 id="approval-title">Payment approval required</h2>
-          <p id="approval-explainer">Approval in Gate H3A does not sign or send a payment. It authorizes opening Tonalli for a separate authorization-only confirmation.</p>
+          <p id="approval-explainer">The resource tool has already returned. This page-owned decision does not sign or send a payment; approval only authorizes opening Tonalli for a separate authorization-only confirmation.</p>
         </div>
 
         <dl class="approval-details">
@@ -176,21 +176,21 @@
         <div class="section-heading">
           <div>
             <p class="section-kicker">Gate contract</p>
-            <h2 id="contract-title">Two-stage rendezvous. One authorization proof. Then stop.</h2>
+            <h2 id="contract-title">One short tool call. One page-owned decision. Then stop.</h2>
           </div>
-          <p>The first tool makes one uncached resource request, preserves the H2B/H3A boundary, and opens a challenge-bound Tonalli handoff only after approval. The second read-only tool reports page-owned ephemeral state.</p>
+          <p>The first tool makes one uncached resource request, validates the H2B requirement, installs the H3A approval session, and returns without waiting for a click. The second read-only tool reports the page-owned ephemeral state.</p>
         </div>
 
         <div class="grid-3 gate-grid">
           <article class="card">
             <span class="card-number">01</span>
             <h3>Live contract</h3>
-            <p>The page registers two imperative WebMCP tools and accepts only the exact reviewed 100 XEC HTTP 402 requirement.</p>
+            <p>The resource tool accepts only the exact reviewed 100 XEC HTTP 402 requirement and returns <code>approval_required</code> without holding the WebMCP invocation open.</p>
           </article>
           <article class="card">
             <span class="card-number">02</span>
             <h3>Human + wallet boundary</h3>
-            <p>Approval creates a 32-byte challenge and opens Tonalli in an isolated auxiliary context. Tonalli H3B remains disabled in production until separately authorized.</p>
+            <p>A later explicit click creates the 32-byte challenge and opens Tonalli in an isolated auxiliary context. No challenge or handoff exists before approval.</p>
           </article>
           <article class="card">
             <span class="card-number">03</span>
@@ -206,7 +206,7 @@
 
   <footer class="site-footer">
     <div class="container footer-grid">
-      <p><strong>Gate H3C</strong> prepares an ephemeral Tonalli authorization-proof bridge. H3B is not enabled in production, and this page does not demonstrate an XEC payment, transaction, settlement, broadcast, or resource unlock.</p>
+      <p><strong>Gate H3C</strong> prepares an ephemeral Tonalli authorization-proof bridge. Tonalli H3B remains a separately controlled authorization boundary, and this page does not demonstrate an XEC payment, transaction, settlement, broadcast, or resource unlock.</p>
       <div class="footer-links">
         <a href="/">Public lab</a>
         <a href="https://github.com/xolosArmy/x402eCash">Repository</a>

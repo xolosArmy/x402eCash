@@ -23,6 +23,7 @@ import {
 } from '../h3c-contract.js'
 import { createH3CBridge } from '../h3c-bridge.js'
 import { buildH3BAuthorizationMessage, verifySignedH3BProof } from '../h3c-verify.js'
+import { createResourceToolExecutor } from '../webmcp.js'
 
 const HERE = new URL('.', import.meta.url)
 const WEBMCP_ROOT = fileURLToPath(new URL('../', import.meta.url))
@@ -49,6 +50,30 @@ const PAYMENT_REQUIRED = Object.freeze({
     extra: Object.freeze({ displayAmount: '100 XEC', experimental: true, gate: 'H2A' })
   })]),
   extensions: Object.freeze({})
+})
+
+const FIRST_APPROVAL_REQUIRED = Object.freeze({
+  status: 'approval_required',
+  gate: 'H3A',
+  httpStatus: 402,
+  message: 'The live 100 XEC requirement was validated and is awaiting a human decision. No payment was performed.',
+  approval: Object.freeze({ required: true, decided: false, required_amount: '100 XEC' }),
+  payment: Object.freeze({ performed: false })
+})
+
+const RESULT_APPROVAL_REQUIRED = Object.freeze({
+  status: 'approval_required',
+  gate: 'H3A',
+  approval: Object.freeze({ required: true, decided: false, required_amount: '100 XEC' }),
+  payment: Object.freeze({ performed: false })
+})
+
+const HUMAN_REJECTED = Object.freeze({
+  status: 'authorization_rejected',
+  gate: 'H3A',
+  authorization: Object.freeze({ signed: false, verified: false }),
+  payment: Object.freeze({ performed: false }),
+  transaction: Object.freeze({ created: false, broadcasted: false })
 })
 
 const deterministicCrypto = Object.freeze({
@@ -170,10 +195,10 @@ const createManualScheduler = () => {
   }
 }
 
-const autoHandshakeOpen = (openedUrls) => (url) => {
+const autoHandshakeOpen = (openedUrls, nowSeconds = () => NOW) => (url) => {
   openedUrls.push(url)
   const hash = new URL(url, 'https://x402.ecash.mx').hash
-  const request = parseH3BRequestTransport({ hash, search: '', nowSeconds: NOW }).request
+  const request = parseH3BRequestTransport({ hash, search: '', nowSeconds: nowSeconds() }).request
   const child = new MockBroadcastChannel(h3cChannelName(request.challengeId))
   queueMicrotask(() => {
     child.postMessage({ type: 'h3c-handoff-opened', challengeId: request.challengeId })
@@ -186,16 +211,207 @@ const createAutoBridge = (overrides = {}) => {
   MockBroadcastChannel.reset()
   const openedUrls = []
   const trace = []
+  const nowSeconds = overrides.nowSeconds ?? (() => NOW)
   const bridge = createH3CBridge({
     BroadcastChannelImplementation: MockBroadcastChannel,
-    openWindow: autoHandshakeOpen(openedUrls),
+    openWindow: autoHandshakeOpen(openedUrls, nowSeconds),
     cryptoImplementation: deterministicCrypto,
-    nowSeconds: () => NOW,
+    nowSeconds,
     handoffTimeoutMs: 100,
     addTraceEvent: (message) => trace.push(message),
     ...overrides
   })
   return { bridge, openedUrls, trace }
+}
+
+const createApproval = (bridge, paymentRequired = PAYMENT_REQUIRED) => (
+  bridge.createApprovalSession({ paymentRequired })
+)
+
+const startApprovedHandoff = (bridge, paymentRequired = PAYMENT_REQUIRED) => {
+  const approval = createApproval(bridge, paymentRequired)
+  return bridge.startHandoff(approval.binding)
+}
+
+const encodePaymentRequiredHeader = (paymentRequired = PAYMENT_REQUIRED) => (
+  Buffer.from(JSON.stringify(paymentRequired), 'utf8').toString('base64')
+)
+
+const paymentRequiredResponse = (paymentRequired = PAYMENT_REQUIRED) => ({
+  status: 402,
+  headers: {
+    get (name) {
+      return name.toUpperCase() === 'PAYMENT-REQUIRED'
+        ? encodePaymentRequiredHeader(paymentRequired)
+        : null
+    }
+  }
+})
+
+const deferred = () => {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+const createResourceHarness = ({ bridgeOverrides = {}, fetchImplementation } = {}) => {
+  const { bridge, openedUrls, trace } = createAutoBridge(bridgeOverrides)
+  const rendered = []
+  const fetches = []
+  const execute = createResourceToolExecutor({
+    bridge,
+    fetchImplementation: async (url, options) => {
+      fetches.push({ url, options })
+      return fetchImplementation
+        ? fetchImplementation(url, options)
+        : paymentRequiredResponse()
+    },
+    renderApproval: (renderedApproval) => {
+      const mounted = { ...renderedApproval, cleaned: false }
+      rendered.push(mounted)
+      return {
+        cleanup () { mounted.cleaned = true }
+      }
+    },
+    traceEvent: (message) => trace.push(message)
+  })
+  return { bridge, execute, fetches, openedUrls, rendered, trace }
+}
+
+class FakeUiNode {
+  constructor () {
+    this.dataset = {}
+    this.hidden = false
+    this.textContent = ''
+    this.disabled = false
+    this.attributes = new Map()
+  }
+
+  setAttribute (name, value) {
+    this.attributes.set(name, String(value))
+  }
+}
+
+class FakeUiButton extends FakeUiNode {
+  constructor () {
+    super()
+    this.listeners = new Set()
+  }
+
+  addEventListener (type, listener) {
+    if (type === 'click') this.listeners.add(listener)
+  }
+
+  removeEventListener (type, listener) {
+    if (type === 'click') this.listeners.delete(listener)
+  }
+
+  click () {
+    if (this.disabled) return false
+    for (const listener of [...this.listeners]) listener({ type: 'click', currentTarget: this })
+    return true
+  }
+}
+
+const createProductionUiEnvironment = () => {
+  const registeredTools = new Map()
+  const cards = []
+  const trace = []
+  const openedUrls = []
+  const fetches = []
+  const approvalRegion = new FakeUiNode()
+  approvalRegion.hidden = true
+  const approvalMount = new FakeUiNode()
+  approvalMount.children = []
+  approvalMount.replaceChildren = (...children) => { approvalMount.children = children }
+  const rendezvousRegion = new FakeUiNode()
+  const rendezvousState = new FakeUiNode()
+  const rendezvousChallenge = new FakeUiNode()
+  const rendezvousExpiry = new FakeUiNode()
+  const traceLog = new FakeUiNode()
+  traceLog.querySelector = () => null
+  traceLog.append = (item) => trace.push(item.textContent)
+
+  const approvalTemplate = {
+    content: {
+      cloneNode () {
+        const nodes = new Map([
+          ['[data-approval-card]', new FakeUiNode()],
+          ['[data-approval-amount]', new FakeUiNode()],
+          ['[data-approval-network]', new FakeUiNode()],
+          ['[data-approval-asset]', new FakeUiNode()],
+          ['[data-approval-destination]', new FakeUiNode()],
+          ['[data-approval-experimental]', new FakeUiNode()],
+          ['[data-approval-reject]', new FakeUiButton()],
+          ['[data-approval-approve]', new FakeUiButton()],
+          ['[data-approval-status]', new FakeUiNode()]
+        ])
+        const fragment = { querySelector: (selector) => nodes.get(selector) ?? null }
+        const card = {
+          fragment,
+          card: nodes.get('[data-approval-card]'),
+          rejectButton: nodes.get('[data-approval-reject]'),
+          approveButton: nodes.get('[data-approval-approve]'),
+          status: nodes.get('[data-approval-status]')
+        }
+        card.card.focus = () => { card.card.focused = true }
+        cards.push(card)
+        return fragment
+      }
+    }
+  }
+
+  const selectors = new Map([
+    ['[data-trace-log]', traceLog],
+    ['[data-webmcp-state]', new FakeUiNode()],
+    ['[data-webmcp-status]', new FakeUiNode()],
+    ['[data-webmcp-detail]', new FakeUiNode()],
+    ['[data-approval-region]', approvalRegion],
+    ['[data-approval-mount]', approvalMount],
+    ['[data-approval-template]', approvalTemplate],
+    ['[data-rendezvous-region]', rendezvousRegion],
+    ['[data-rendezvous-state]', rendezvousState],
+    ['[data-rendezvous-challenge]', rendezvousChallenge],
+    ['[data-rendezvous-expiry]', rendezvousExpiry]
+  ])
+
+  const document = {
+    modelContext: {
+      async registerTool (tool) { registeredTools.set(tool.name, tool) }
+    },
+    querySelector: (selector) => selectors.get(selector) ?? null,
+    createElement: () => new FakeUiNode()
+  }
+  const fetchImplementation = async (url, options) => {
+    fetches.push({ url, options })
+    return paymentRequiredResponse()
+  }
+  const openWindow = autoHandshakeOpen(openedUrls, () => Math.floor(Date.now() / 1_000))
+
+  return {
+    document,
+    fetchImplementation,
+    openWindow,
+    registeredTools,
+    cards,
+    trace,
+    openedUrls,
+    fetches,
+    approvalMount
+  }
+}
+
+const replaceGlobal = (name, value) => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, name)
+  Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
+  return () => {
+    if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+    else delete globalThis[name]
+  }
 }
 
 const sendCallback = async (bridge, message) => {
@@ -432,7 +648,7 @@ test('proof schema rejects unknown signature field', async () => {
 
 test('bridge opens the same-origin handoff only after creating a live rendezvous', async () => {
   const { bridge, openedUrls } = createAutoBridge()
-  const result = await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  const result = await startApprovedHandoff(bridge)
   assert.equal(result.status, 'authorization_pending')
   assert.equal(result.payment.performed, false)
   assert.equal(result.transaction.created, false)
@@ -467,7 +683,7 @@ test('handoff window opens synchronously within the startHandoff call', async ()
     nowSeconds: () => NOW,
     handoffTimeoutMs: 100
   })
-  const handoff = bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  const handoff = startApprovedHandoff(bridge)
   startReturned = true
   assert.equal(openedSynchronously, true)
   await handoff
@@ -477,18 +693,19 @@ test('handoff window opens synchronously within the startHandoff call', async ()
 
 test('noopener-style null window handle is accepted only with a valid handoff ACK', async () => {
   const { bridge } = createAutoBridge()
-  await assert.doesNotReject(bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED }))
+  await assert.doesNotReject(startApprovedHandoff(bridge))
   assert.equal(bridge.getSnapshot().state, 'awaiting-tonalli')
   bridge.dispose()
 })
 
 test('result tool view is pending while Tonalli has not returned', async () => {
   const { bridge } = createAutoBridge()
-  await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  await startApprovedHandoff(bridge)
   assert.deepEqual(bridge.readResult(), {
     status: 'authorization_pending', gate: 'H3C', challengeId: CHALLENGE,
-    authorization: { signed: false, verified: false, pending: true },
-    payment: { performed: false }
+    authorization: { wallet: 'Tonalli', signed: false, verified: false, pending: true },
+    payment: { performed: false },
+    transaction: { created: false, broadcasted: false }
   })
   bridge.dispose()
 })
@@ -507,9 +724,9 @@ test('duplicate concurrent handoff fails closed', async () => {
     nowSeconds: () => NOW,
     handoffTimeoutMs: 100
   })
-  const first = bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  const first = startApprovedHandoff(bridge)
   await waitFor(() => Boolean(handoffChild))
-  await expectFailure(() => bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED }), /already pending/u)
+  await expectFailure(() => startApprovedHandoff(bridge), /already pending/u)
   handoffChild.postMessage({ type: 'h3c-handoff-opened', challengeId: CHALLENGE })
   await first
   handoffChild.close()
@@ -525,7 +742,7 @@ test('missing handoff ACK fails closed', async () => {
     nowSeconds: () => NOW,
     handoffTimeoutMs: 5
   })
-  await expectFailure(() => bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED }), /did not acknowledge/u)
+  await expectFailure(() => startApprovedHandoff(bridge), /did not acknowledge/u)
   assert.equal(bridge.getSnapshot().state, 'failed')
   bridge.dispose()
 })
@@ -539,7 +756,7 @@ test('popup exception fails closed', async () => {
     nowSeconds: () => NOW,
     handoffTimeoutMs: 100
   })
-  await expectFailure(() => bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED }), /could not open/u)
+  await expectFailure(() => startApprovedHandoff(bridge), /could not open/u)
   assert.equal(bridge.getSnapshot().state, 'failed')
   bridge.dispose()
 })
@@ -550,24 +767,18 @@ test('BroadcastChannel support is mandatory', async () => {
     cryptoImplementation: deterministicCrypto,
     nowSeconds: () => NOW
   })
-  await expectFailure(() => bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED }), /BroadcastChannel is unavailable/u)
+  await expectFailure(() => startApprovedHandoff(bridge), /BroadcastChannel is unavailable/u)
 })
 
-test('AbortSignal during handoff fails closed without becoming approve or reject', async () => {
-  MockBroadcastChannel.reset()
+test('an unrelated completed-tool AbortSignal cannot cancel page-owned approval', async () => {
   const controller = new AbortController()
-  const bridge = createH3CBridge({
-    BroadcastChannelImplementation: MockBroadcastChannel,
-    openWindow: () => {
-      queueMicrotask(() => controller.abort())
-      return null
-    },
-    cryptoImplementation: deterministicCrypto,
-    nowSeconds: () => NOW,
-    handoffTimeoutMs: 100
-  })
-  await expectFailure(() => bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED, signal: controller.signal }), /aborted/u)
-  assert.equal(bridge.getSnapshot().state, 'failed')
+  const { bridge, openedUrls } = createAutoBridge()
+  const approval = createApproval(bridge)
+  controller.abort()
+  assert.equal(bridge.readResult().status, 'approval_required')
+  await bridge.startHandoff(approval.binding)
+  assert.equal(bridge.getSnapshot().state, 'awaiting-tonalli')
+  assert.equal(openedUrls.length, 1)
   bridge.dispose()
 })
 
@@ -587,7 +798,7 @@ test('rendezvous expires in memory and accepts no later callback', async () => {
     handoffTimeoutMs: 100,
     addTraceEvent: (message) => trace.push(message)
   })
-  await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  await startApprovedHandoff(bridge)
   now = NOW + H3C_TTL_SECONDS
   scheduler.runDelay(H3C_TTL_SECONDS * 1_000)
   assert.equal(bridge.getSnapshot().state, 'expired')
@@ -599,7 +810,7 @@ test('rendezvous expires in memory and accepts no later callback', async () => {
 test('result reads lazily expire a throttled live rendezvous', async () => {
   let now = NOW
   const { bridge } = createAutoBridge({ nowSeconds: () => now })
-  await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  await startApprovedHandoff(bridge)
   now = NOW + H3C_TTL_SECONDS
   assert.throws(() => bridge.readResult(), /expired/u)
   assert.equal(bridge.getSnapshot().state, 'expired')
@@ -609,7 +820,7 @@ test('result reads lazily expire a throttled live rendezvous', async () => {
 test('live-state checks release a throttled expired rendezvous', async () => {
   let now = NOW
   const { bridge } = createAutoBridge({ nowSeconds: () => now })
-  await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  await startApprovedHandoff(bridge)
   now = NOW + H3C_TTL_SECONDS
   assert.equal(bridge.hasLiveRendezvous(), false)
   assert.equal(bridge.getSnapshot().state, 'expired')
@@ -643,7 +854,7 @@ test('handoff finishing after deadline never receives parent acceptance', async 
     handoffTimeoutMs: 100
   })
   await expectFailure(
-    () => bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED }),
+    () => startApprovedHandoff(bridge),
     /expired before handoff acknowledgement/u
   )
   await new Promise((resolve) => setTimeout(resolve, 1))
@@ -656,7 +867,7 @@ test('handoff finishing after deadline never receives parent acceptance', async 
 test('callback after deadline expires even when the timer was throttled', async () => {
   let now = NOW
   const { bridge } = createAutoBridge({ nowSeconds: () => now })
-  await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  await startApprovedHandoff(bridge)
   now = NOW + H3C_TTL_SECONDS
   const client = new MockBroadcastChannel(h3cChannelName(CHALLENGE))
   const acknowledgements = []
@@ -680,7 +891,7 @@ test('proof finishing after deadline cannot become verified when the timer was t
     nowSeconds: () => now,
     verifyProof: () => verification
   })
-  await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  await startApprovedHandoff(bridge)
   const client = new MockBroadcastChannel(h3cChannelName(CHALLENGE))
   const acknowledgements = []
   client.onmessage = (event) => acknowledgements.push(event.data)
@@ -704,7 +915,7 @@ test('proof finishing after deadline cannot become verified when the timer was t
 
 test('rejected callback returns authorization_rejected and performed false', async () => {
   const { bridge } = createAutoBridge()
-  await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  await startApprovedHandoff(bridge)
   const { acknowledgements } = await sendCallback(bridge, { type: 'h3c-callback', challengeId: CHALLENGE, status: 'rejected' })
   assert.deepEqual(bridge.readResult(), {
     status: 'authorization_rejected', gate: 'H3C', challengeId: CHALLENGE,
@@ -718,7 +929,7 @@ test('rejected callback returns authorization_rejected and performed false', asy
 
 test('signed callback returns authorization_verified only after real crypto verification', async () => {
   const { bridge, trace } = createAutoBridge()
-  await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  await startApprovedHandoff(bridge)
   const { acknowledgements } = await sendCallback(bridge, {
     type: 'h3c-callback', challengeId: CHALLENGE, status: 'signed', proof: encodeCanonicalBase64Url(signedVectorProof)
   })
@@ -738,7 +949,7 @@ test('signed callback returns authorization_verified only after real crypto veri
 
 test('invalid signed callback is ACKed accepted false and exposes no result', async () => {
   const { bridge } = createAutoBridge()
-  await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  await startApprovedHandoff(bridge)
   const changed = clone(signedVectorProof)
   changed.amount = '10001'
   const { acknowledgements } = await sendCallback(bridge, {
@@ -752,7 +963,7 @@ test('invalid signed callback is ACKed accepted false and exposes no result', as
 
 test('double callback settles once and stale decision cannot change the result', async () => {
   const { bridge } = createAutoBridge()
-  await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  await startApprovedHandoff(bridge)
   const client = new MockBroadcastChannel(h3cChannelName(CHALLENGE))
   const acknowledgements = []
   client.onmessage = (event) => acknowledgements.push(event.data)
@@ -771,7 +982,7 @@ test('double callback settles once and stale decision cannot change the result',
 
 test('valid but wrong callback challenge is ignored', async () => {
   const { bridge } = createAutoBridge()
-  await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  await startApprovedHandoff(bridge)
   const client = new MockBroadcastChannel(h3cChannelName(CHALLENGE))
   const wrongChallenge = encodeBase64UrlBytes(new Uint8Array(32).fill(1))
   const acknowledgements = []
@@ -786,7 +997,7 @@ test('valid but wrong callback challenge is ignored', async () => {
 
 test('page reload semantics provide no rendezvous to a fresh bridge', () => {
   const fresh = createH3CBridge({ BroadcastChannelImplementation: MockBroadcastChannel })
-  assert.throws(() => fresh.readResult(), /No ephemeral H3C authorization session/u)
+  assert.throws(() => fresh.readResult(), /No ephemeral H3A\/H3C authorization session/u)
 })
 
 test('malformed callback fails closed before proof verification', async () => {
@@ -797,7 +1008,7 @@ test('malformed callback fails closed before proof verification', async () => {
       throw new Error('must not run')
     }
   })
-  await bridge.startHandoff({ paymentRequired: PAYMENT_REQUIRED })
+  await startApprovedHandoff(bridge)
   const client = new MockBroadcastChannel(h3cChannelName(CHALLENGE))
   const acknowledgements = []
   client.onmessage = (event) => acknowledgements.push(event.data)
@@ -814,56 +1025,478 @@ test('malformed callback fails closed before proof verification', async () => {
   bridge.dispose()
 })
 
-test('production H3C runtime has one protected-resource fetch and no retry', async () => {
-  const source = await readFile(`${WEBMCP_ROOT}webmcp.js`, 'utf8')
-  assert.equal((source.match(/\bfetch\s*\(/gu) ?? []).length, 1)
-  assert.equal(source.includes('retry'), false)
+test('resource tool returns exact approval_required before any human decision', async () => {
+  const { bridge, execute, fetches, openedUrls, rendered } = createResourceHarness()
+  const result = await execute({})
+  assert.deepEqual(result, FIRST_APPROVAL_REQUIRED)
+  assert.deepEqual(bridge.readResult(), RESULT_APPROVAL_REQUIRED)
+  assert.equal(fetches.length, 1)
+  assert.equal(fetches[0].url, 'https://api.x402.ecash.mx/v1/resource/demo')
+  assert.deepEqual(fetches[0].options, { cache: 'no-store', redirect: 'error' })
+  assert.equal(rendered.length, 1)
+  assert.equal(openedUrls.length, 0)
+  assert.equal(bridge.getSnapshot().state, 'approval-required')
+  assert.equal(bridge.getSnapshot().challengeId, null)
+  assert.equal(bridge.getSnapshot().expiresAt, null)
+  bridge.dispose()
 })
 
-test('H3A reject returns before any Tonalli handoff', async () => {
-  const source = await readFile(`${WEBMCP_ROOT}webmcp.js`, 'utf8')
-  const rejectHandler = source.slice(
-    source.indexOf('function handleReject'),
-    source.indexOf('function handleApprove')
+test('arbitrarily long delay after tool return preserves approval and starts a fresh 240-second H3C clock', async () => {
+  let now = NOW
+  const { bridge, execute, openedUrls, rendered } = createResourceHarness({
+    bridgeOverrides: { nowSeconds: () => now }
+  })
+  await execute({})
+  const before = bridge.getSnapshot()
+  assert.equal(before.createdAt, NOW)
+  now += 31_536_000
+  assert.equal(bridge.hasLiveSession(), true)
+  assert.equal(bridge.getSnapshot().generation, before.generation)
+  assert.equal(bridge.getSnapshot().createdAt, before.createdAt)
+  const handoff = bridge.startHandoff(rendered[0].binding)
+  assert.equal(openedUrls.length, 1)
+  const request = parseH3BRequestTransport({
+    hash: new URL(openedUrls[0], 'https://x402.ecash.mx').hash,
+    search: '',
+    nowSeconds: now
+  }).request
+  assert.equal(request.issuedAt, now)
+  assert.equal(request.expiresAt, now + H3C_TTL_SECONDS)
+  await handoff
+  assert.equal(bridge.getSnapshot().state, 'awaiting-tonalli')
+  bridge.dispose()
+})
+
+test('human Reject after resource-tool return is page-owned and opens no handoff', async () => {
+  const { bridge, execute, fetches, openedUrls, rendered, trace } = createResourceHarness()
+  await execute({})
+  const result = bridge.rejectApproval(rendered[0].binding)
+  assert.deepEqual(result, HUMAN_REJECTED)
+  assert.deepEqual(bridge.readResult(), HUMAN_REJECTED)
+  assert.equal(fetches.length, 1)
+  assert.equal(openedUrls.length, 0)
+  assert.ok(trace.includes('Human decision: REJECTED'))
+  assert.ok(trace.includes('STOP - Payment not authorized'))
+  await expectFailure(() => bridge.startHandoff(rendered[0].binding), /no longer matches/u)
+  bridge.dispose()
+})
+
+test('human Approve after resource-tool return opens synchronously and later verifies', async () => {
+  MockBroadcastChannel.reset()
+  let clickReturned = false
+  let openedSynchronously = false
+  let child
+  const { bridge, execute, rendered } = createResourceHarness({
+    bridgeOverrides: {
+      openWindow: (url) => {
+        openedSynchronously = !clickReturned
+        const request = parseH3BRequestTransport({
+          hash: new URL(url, 'https://x402.ecash.mx').hash,
+          search: '',
+          nowSeconds: NOW
+        }).request
+        child = new MockBroadcastChannel(h3cChannelName(request.challengeId))
+        queueMicrotask(() => child.postMessage({
+          type: 'h3c-handoff-opened',
+          challengeId: request.challengeId
+        }))
+        return null
+      }
+    }
+  })
+  await execute({})
+  const handoff = bridge.startHandoff(rendered[0].binding)
+  clickReturned = true
+  assert.equal(openedSynchronously, true)
+  assert.equal(bridge.readResult().status, 'authorization_pending')
+  await handoff
+  assert.equal(bridge.readResult().authorization.pending, true)
+  await sendCallback(bridge, {
+    type: 'h3c-callback',
+    challengeId: CHALLENGE,
+    status: 'signed',
+    proof: encodeCanonicalBase64Url(signedVectorProof)
+  })
+  assert.equal(bridge.readResult().status, 'authorization_verified')
+  child.close()
+  bridge.dispose()
+})
+
+test('aborting the original tool signal after return does not cancel approval or handoff', async () => {
+  const controller = new AbortController()
+  const { bridge, execute, openedUrls, rendered } = createResourceHarness()
+  assert.deepEqual(await execute({}, { signal: controller.signal }), FIRST_APPROVAL_REQUIRED)
+  controller.abort()
+  assert.deepEqual(bridge.readResult(), RESULT_APPROVAL_REQUIRED)
+  await bridge.startHandoff(rendered[0].binding)
+  assert.equal(openedUrls.length, 1)
+  assert.equal(bridge.getSnapshot().state, 'awaiting-tonalli')
+  bridge.dispose()
+})
+
+test('abort before resource-tool return creates no approval session and permits retry', async () => {
+  const firstFetch = deferred()
+  let fetchCall = 0
+  const controller = new AbortController()
+  const { bridge, execute, fetches, rendered } = createResourceHarness({
+    fetchImplementation: () => {
+      fetchCall += 1
+      return fetchCall === 1 ? firstFetch.promise : paymentRequiredResponse()
+    }
+  })
+  const first = execute({}, { signal: controller.signal })
+  controller.abort()
+  firstFetch.resolve(paymentRequiredResponse())
+  await assert.rejects(first, (error) => error?.name === 'AbortError')
+  assert.equal(fetches[0].options.signal, controller.signal)
+  assert.equal(bridge.getSnapshot().state, 'idle')
+  assert.equal(rendered.length, 0)
+  assert.deepEqual(await execute({}), FIRST_APPROVAL_REQUIRED)
+  assert.equal(rendered.length, 1)
+  bridge.dispose()
+})
+
+test('concurrent resource invocation fails before a second fetch', async () => {
+  const firstFetch = deferred()
+  const { bridge, execute, fetches } = createResourceHarness({
+    fetchImplementation: () => firstFetch.promise
+  })
+  const first = execute({})
+  await waitFor(() => fetches.length === 1)
+  await expectFailure(() => execute({}), /already active/u)
+  assert.equal(fetches.length, 1)
+  firstFetch.resolve(paymentRequiredResponse())
+  await first
+  bridge.dispose()
+})
+
+test('live approval session blocks replacement before any additional fetch', async () => {
+  const { bridge, execute, fetches } = createResourceHarness()
+  await execute({})
+  await expectFailure(() => execute({}), /already pending/u)
+  assert.equal(fetches.length, 1)
+  assert.equal(bridge.getSnapshot().state, 'approval-required')
+  bridge.dispose()
+})
+
+test('resource tool is blocked during handoff-opening, awaiting-tonalli, and proof-verifying', async () => {
+  const verification = deferred()
+  let handoffChild
+  const { bridge, execute, fetches, rendered } = createResourceHarness({
+    bridgeOverrides: {
+      openWindow: (url) => {
+        const request = parseH3BRequestTransport({
+          hash: new URL(url, 'https://x402.ecash.mx').hash,
+          search: '',
+          nowSeconds: NOW
+        }).request
+        handoffChild = new MockBroadcastChannel(h3cChannelName(request.challengeId))
+        return null
+      },
+      verifyProof: () => verification.promise
+    }
+  })
+  await execute({})
+  const handoff = bridge.startHandoff(rendered[0].binding)
+  await waitFor(() => bridge.getSnapshot().state === 'handoff-opening')
+  await expectFailure(() => execute({}), /already pending/u)
+  assert.equal(fetches.length, 1)
+
+  handoffChild.postMessage({ type: 'h3c-handoff-opened', challengeId: CHALLENGE })
+  await handoff
+  await expectFailure(() => execute({}), /already pending/u)
+  assert.equal(fetches.length, 1)
+
+  const callback = new MockBroadcastChannel(h3cChannelName(CHALLENGE))
+  callback.postMessage({ type: 'h3c-callback', challengeId: CHALLENGE, status: 'signed', proof: 'e30' })
+  await waitFor(() => bridge.getSnapshot().state === 'proof-verifying')
+  await expectFailure(() => execute({}), /already pending/u)
+  assert.equal(fetches.length, 1)
+  verification.resolve({
+    payer: vector.payer,
+    publicKey: vector.publicKey,
+    paymentRequiredSha256: PAYMENT_REQUIRED_SHA256
+  })
+  await waitFor(() => bridge.getSnapshot().state === 'verified')
+  callback.close()
+  handoffChild.close()
+  bridge.dispose()
+})
+
+test('malformed PaymentRequired never creates or renders approval state', async () => {
+  const malformed = clone(PAYMENT_REQUIRED)
+  malformed.accepts[0].amount = '10001'
+  const { bridge, execute, fetches, rendered } = createResourceHarness({
+    fetchImplementation: () => paymentRequiredResponse(malformed)
+  })
+  await expectFailure(() => execute({}), /amount must equal 10000/u)
+  assert.equal(fetches.length, 1)
+  assert.equal(rendered.length, 0)
+  assert.equal(bridge.getSnapshot().state, 'idle')
+  bridge.dispose()
+})
+
+for (const [name, response] of [
+  ['non-402 response', { status: 200, headers: { get: () => null } }],
+  ['missing PAYMENT-REQUIRED header', { status: 402, headers: { get: () => null } }],
+  ['malformed Base64 header', { status: 402, headers: { get: () => '***' } }],
+  ['invalid UTF-8 header', { status: 402, headers: { get: () => Buffer.from([0xff]).toString('base64') } }],
+  ['invalid JSON header', { status: 402, headers: { get: () => Buffer.from('not-json').toString('base64') } }]
+]) {
+  test(`${name} fails before approval state is rendered`, async () => {
+    const { bridge, execute, fetches, rendered } = createResourceHarness({
+      fetchImplementation: () => response
+    })
+    await expectFailure(() => execute({}))
+    assert.equal(fetches.length, 1)
+    assert.equal(rendered.length, 0)
+    assert.equal(bridge.getSnapshot().state, 'idle')
+    bridge.dispose()
+  })
+}
+
+test('terminal H3A rejection resets only after a newly validated 402', async () => {
+  const { bridge, execute, fetches, rendered, trace } = createResourceHarness()
+  await execute({})
+  const firstBinding = rendered[0].binding
+  const firstGeneration = bridge.getSnapshot().generation
+  bridge.rejectApproval(firstBinding)
+  await execute({})
+  assert.equal(fetches.length, 2)
+  assert.equal(rendered.length, 2)
+  assert.equal(bridge.getSnapshot().state, 'approval-required')
+  assert.equal(bridge.getSnapshot().generation, firstGeneration + 1)
+  assert.equal(bridge.getSnapshot().challengeId, null)
+  assert.ok(trace.includes('Previous terminal authorization session reset for a new validated resource request'))
+  assert.throws(() => bridge.validateApproval(firstBinding), /no longer matches/u)
+  bridge.dispose()
+})
+
+test('rejected, verified, failed, and expired sessions all use the explicit terminal reset policy', async () => {
+  const cases = [
+    {
+      name: 'rejected',
+      setup: async (bridge, binding) => { bridge.rejectApproval(binding) }
+    },
+    {
+      name: 'verified',
+      setup: async (bridge, binding) => {
+        await bridge.startHandoff(binding)
+        await sendCallback(bridge, {
+          type: 'h3c-callback',
+          challengeId: CHALLENGE,
+          status: 'signed',
+          proof: encodeCanonicalBase64Url(signedVectorProof)
+        })
+      }
+    },
+    {
+      name: 'failed',
+      setup: async (bridge, binding) => {
+        bridge.failApprovalSession(binding, new Error('deterministic failure'))
+      }
+    },
+    {
+      name: 'expired',
+      setup: async (bridge, binding, advanceClock) => {
+        await bridge.startHandoff(binding)
+        advanceClock()
+        assert.equal(bridge.hasLiveSession(), false)
+      }
+    }
+  ]
+
+  for (const scenario of cases) {
+    let now = NOW
+    const { bridge, execute, fetches, rendered, trace } = createResourceHarness({
+      bridgeOverrides: { nowSeconds: () => now }
+    })
+    await execute({})
+    const first = rendered[0]
+    const firstGeneration = first.binding.generation
+    await scenario.setup(bridge, first.binding, () => { now += H3C_TTL_SECONDS })
+    assert.equal(bridge.getSnapshot().state, scenario.name)
+    await execute({})
+    assert.equal(fetches.length, 2)
+    assert.equal(rendered.length, 2)
+    assert.equal(rendered[1].binding.generation, firstGeneration + 1)
+    assert.equal(bridge.getSnapshot().state, 'approval-required')
+    assert.equal(bridge.getSnapshot().challengeId, null)
+    assert.ok(trace.includes('Previous terminal authorization session reset for a new validated resource request'))
+    assert.throws(() => bridge.validateApproval(first.binding), /no longer matches/u)
+    bridge.dispose()
+  }
+})
+
+test('failed replacement validation preserves the previous terminal result', async () => {
+  let fetchCall = 0
+  const malformed = clone(PAYMENT_REQUIRED)
+  malformed.resource.url = 'https://example.com/resource'
+  const { bridge, execute, rendered } = createResourceHarness({
+    fetchImplementation: () => {
+      fetchCall += 1
+      return paymentRequiredResponse(fetchCall === 1 ? PAYMENT_REQUIRED : malformed)
+    }
+  })
+  await execute({})
+  bridge.rejectApproval(rendered[0].binding)
+  const terminal = bridge.readResult()
+  await expectFailure(() => execute({}), /resource.url/u)
+  assert.deepEqual(bridge.readResult(), terminal)
+  assert.equal(bridge.getSnapshot().state, 'rejected')
+  bridge.dispose()
+})
+
+test('stale fingerprint and double approval attempts fail closed without a second popup', async () => {
+  const mutableRequirement = clone(PAYMENT_REQUIRED)
+  const { bridge, openedUrls } = createAutoBridge()
+  const approval = createApproval(bridge, mutableRequirement)
+  mutableRequirement.accepts[0].amount = '10001'
+  assert.throws(() => bridge.validateApproval(approval.binding), /no longer matches/u)
+  assert.throws(
+    () => bridge.failApprovalSession({
+      ...approval.binding,
+      paymentRequiredFingerprint: 'forged-fingerprint'
+    }, new Error('forged failure')),
+    /no longer current/u
   )
-  assert.ok(rejectHandler.includes("settle('resolve', 'rejected')"))
-  assert.equal(rejectHandler.includes('beginApprovedHandoff'), false)
-  assert.equal(rejectHandler.includes('h3cBridge.startHandoff'), false)
-  assert.ok(source.includes("status: 'payment_rejected'"))
-  assert.ok(source.includes('approved: false'))
+  assert.equal(bridge.getSnapshot().state, 'approval-required')
+  bridge.failApprovalSession(approval.binding, new Error('fingerprint changed'))
+  assert.equal(bridge.getSnapshot().state, 'failed')
+  assert.equal(openedUrls.length, 0)
+
+  const next = createApproval(bridge)
+  const firstHandoff = bridge.startHandoff(next.binding)
+  await expectFailure(() => bridge.startHandoff(next.binding), /no longer matches/u)
+  await firstHandoff
+  assert.equal(openedUrls.length, 1)
+  bridge.dispose()
 })
 
-test('Approve click starts handoff before its approval promise settles', async () => {
+test('registered production tools handle real Reject and Approve button clicks after returning', async () => {
+  MockBroadcastChannel.reset()
+  const ui = createProductionUiEnvironment()
+  const restore = [
+    replaceGlobal('document', ui.document),
+    replaceGlobal('window', { open: ui.openWindow, close: () => {} }),
+    replaceGlobal('fetch', ui.fetchImplementation),
+    replaceGlobal('BroadcastChannel', MockBroadcastChannel)
+  ]
+  try {
+    const production = await import(new URL('../webmcp.js?production-ui-integration=1', import.meta.url))
+    production.initializeWebMcp()
+    await waitFor(() => ui.registeredTools.size === 2)
+    const resourceTool = ui.registeredTools.get('get_paid_xec_resource')
+    const resultTool = ui.registeredTools.get('get_x402_authorization_result')
+    assert.ok(resourceTool)
+    assert.ok(resultTool)
+
+    assert.deepEqual(await resourceTool.execute({}), FIRST_APPROVAL_REQUIRED)
+    assert.equal(ui.cards.length, 1)
+    const rejectedCard = ui.cards[0]
+    assert.equal(rejectedCard.rejectButton.click(), true)
+    assert.deepEqual(resultTool.execute({}), HUMAN_REJECTED)
+    assert.equal(rejectedCard.rejectButton.disabled, true)
+    assert.equal(rejectedCard.approveButton.disabled, true)
+    assert.equal(rejectedCard.approveButton.click(), false)
+    assert.equal(ui.openedUrls.length, 0)
+
+    assert.deepEqual(await resourceTool.execute({}), FIRST_APPROVAL_REQUIRED)
+    assert.equal(ui.cards.length, 2)
+    assert.equal(ui.approvalMount.children.length, 1)
+    const approvedCard = ui.cards[1]
+    const traceBeforeApproval = ui.trace.length
+    assert.equal(approvedCard.approveButton.click(), true)
+    assert.equal(ui.openedUrls.length, 1, 'window.open must run synchronously inside the button click')
+    assert.equal(approvedCard.rejectButton.disabled, true)
+    assert.equal(approvedCard.approveButton.disabled, true)
+    assert.equal(approvedCard.approveButton.click(), false)
+    await waitFor(() => ui.trace.some((entry) => entry.includes('Tonalli authorization handoff opened')))
+
+    const pending = resultTool.execute({})
+    assert.equal(pending.status, 'authorization_pending')
+    assert.equal(pending.gate, 'H3C')
+    assert.equal(typeof pending.challengeId, 'string')
+    const approvalTrace = ui.trace.findIndex((entry, index) => (
+      index >= traceBeforeApproval && entry.includes('Human decision: APPROVED')
+    ))
+    const challengeTrace = ui.trace.findIndex((entry, index) => (
+      index >= traceBeforeApproval && entry.includes('H3B challenge created')
+    ))
+    assert.ok(approvalTrace >= traceBeforeApproval)
+    assert.ok(challengeTrace > approvalTrace)
+
+    const callback = new MockBroadcastChannel(h3cChannelName(pending.challengeId))
+    callback.postMessage({
+      type: 'h3c-callback',
+      challengeId: pending.challengeId,
+      status: 'rejected'
+    })
+    await waitFor(() => {
+      try { return resultTool.execute({}).status === 'authorization_rejected' } catch { return false }
+    })
+    assert.match(approvedCard.status.textContent, /Tonalli authorization request rejected/u)
+    assert.equal(ui.fetches.length, 2, 'human decisions must not retry the protected resource')
+    callback.close()
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  } finally {
+    for (const restoreGlobal of restore.reverse()) restoreGlobal()
+    MockBroadcastChannel.reset()
+  }
+})
+
+test('production click handler validates, disables, and starts H3C without awaiting', async () => {
   const source = await readFile(`${WEBMCP_ROOT}webmcp.js`, 'utf8')
   const handler = source.slice(
     source.indexOf('function handleApprove'),
-    source.indexOf('function handleAbort')
+    source.indexOf('try {\n    ui.rejectButton.addEventListener')
   )
-  assert.ok(handler.indexOf('beginApprovedHandoff()') < handler.indexOf("settle('resolve', 'approved')"))
-  assert.ok(source.includes('handoff did not start from the approval gesture'))
-})
-
-test('malformed PaymentRequired validation precedes approval UI rendering', async () => {
-  const source = await readFile(`${WEBMCP_ROOT}webmcp.js`, 'utf8')
-  assert.ok(
-    source.indexOf('const acceptance = validatePaymentRequired(paymentRequired)') <
-    source.indexOf('const decision = await requestHumanApproval')
-  )
-})
-
-test('H3C first-tool result is authorization_pending, never final payment_approved', async () => {
-  const source = await readFile(`${WEBMCP_ROOT}h3c-bridge.js`, 'utf8')
-  assert.ok(source.includes("status: 'authorization_pending'"))
-  assert.equal(source.includes("status: 'payment_approved'"), false)
-})
-
-test('H3A approval controls retain single-settle, stale-binding and abort guards', async () => {
-  const source = await readFile(`${WEBMCP_ROOT}webmcp.js`, 'utf8')
-  assert.ok(source.includes('if (settled) return'))
-  assert.ok(source.includes('pendingApproval.requirement !== paymentRequired'))
-  assert.ok(source.includes("signal?.addEventListener('abort'"))
+  assert.ok(handler.indexOf('h3cBridge.validateApproval(binding)') < handler.indexOf('lockControls()'))
+  assert.ok(handler.indexOf('lockControls()') < handler.indexOf("addTraceEvent('Human decision: APPROVED')"))
+  assert.ok(handler.indexOf("addTraceEvent('Human decision: APPROVED')") < handler.indexOf('h3cBridge.startHandoff(binding)'))
+  assert.equal(handler.includes('await '), false)
   assert.ok(source.includes('ui.rejectButton.disabled = true'))
   assert.ok(source.includes('ui.approveButton.disabled = true'))
+  assert.ok(source.includes("addTraceEvent('Human approval required')"))
+  assert.equal(source.includes("signal?.addEventListener('abort'"), false)
+})
+
+test('resource tool contains one fetch path and never awaits the human decision', async () => {
+  const source = await readFile(`${WEBMCP_ROOT}webmcp.js`, 'utf8')
+  const executor = source.slice(
+    source.indexOf('export const createResourceToolExecutor'),
+    source.indexOf('const executeResourceTool =')
+  )
+  assert.equal((executor.match(/fetchImplementation\s*\(/gu) ?? []).length, 1)
+  assert.equal(executor.includes('requestHumanApproval'), false)
+  assert.equal(executor.includes('await handoff'), false)
+  assert.equal(source.includes('retry'), false)
+})
+
+test('H3C-R1 page copy and approval card describe the decoupled state truthfully', async () => {
+  const page = await readFile(`${WEBMCP_ROOT}index.html`, 'utf8')
+  for (const expected of [
+    'returns <code>approval_required</code> immediately',
+    'The human can decide afterward.',
+    'The resource tool has already returned.',
+    'get_x402_authorization_result',
+    '100 XEC',
+    'Approve 100 XEC',
+    'Reject'
+  ]) {
+    assert.ok(page.includes(expected), expected)
+  }
+  const runtime = await readFile(`${WEBMCP_ROOT}webmcp.js`, 'utf8')
+  for (const field of [
+    'acceptance.extra.displayAmount',
+    'acceptance.network',
+    'acceptance.asset',
+    'acceptance.payTo',
+    'acceptance.extra.experimental'
+  ]) {
+    assert.ok(runtime.includes(field), field)
+  }
+  assert.equal(page.includes('the tool opens an authorization-only Tonalli handoff and returns'), false)
 })
 
 test('only the result tool retains readOnlyHint', async () => {

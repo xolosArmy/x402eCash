@@ -1,7 +1,6 @@
 import {
   H3C_CALLBACK_ACK_TIMEOUT_MS,
   LIVE_RESOURCE_URL,
-  canonicalizeJson,
   decodePaymentRequiredHeader,
   h3cChannelName,
   isRecord,
@@ -14,27 +13,27 @@ import { createH3CBridge } from './h3c-bridge.js'
 
 const RESOURCE_TOOL_NAME = 'get_paid_xec_resource'
 const RESULT_TOOL_NAME = 'get_x402_authorization_result'
-const RESOURCE_TOOL_DESCRIPTION = 'Validate the live experimental 100 XEC HTTP 402 requirement, ask for human approval, and initiate the Tonalli H3B authorization-only handoff. No payment is performed.'
-const RESULT_TOOL_DESCRIPTION = 'Read the current ephemeral Gate H3C authorization state. This tool never initiates signing or payment.'
+const RESOURCE_TOOL_DESCRIPTION = 'Validate the live experimental 100 XEC HTTP 402 requirement and create an ephemeral page-owned human approval session. The tool returns before the human decides. No payment is performed.'
+const RESULT_TOOL_DESCRIPTION = 'Read the current ephemeral Gate H3A/H3C authorization state. This tool never initiates signing or payment.'
 
-const traceLog = document.querySelector('[data-trace-log]')
-const capabilityState = document.querySelector('[data-webmcp-state]')
-const capabilityStatus = document.querySelector('[data-webmcp-status]')
-const capabilityDetail = document.querySelector('[data-webmcp-detail]')
-const approvalRegion = document.querySelector('[data-approval-region]')
-const approvalMount = document.querySelector('[data-approval-mount]')
-const approvalTemplate = document.querySelector('[data-approval-template]')
-const rendezvousRegion = document.querySelector('[data-rendezvous-region]')
-const rendezvousState = document.querySelector('[data-rendezvous-state]')
-const rendezvousChallenge = document.querySelector('[data-rendezvous-challenge]')
-const rendezvousExpiry = document.querySelector('[data-rendezvous-expiry]')
-const callbackRegion = document.querySelector('[data-callback-region]')
-const callbackTitle = document.querySelector('[data-callback-title]')
-const callbackDetail = document.querySelector('[data-callback-detail]')
-const callbackClose = document.querySelector('[data-callback-close]')
+const pageDocument = globalThis.document
+const traceLog = pageDocument?.querySelector('[data-trace-log]')
+const capabilityState = pageDocument?.querySelector('[data-webmcp-state]')
+const capabilityStatus = pageDocument?.querySelector('[data-webmcp-status]')
+const capabilityDetail = pageDocument?.querySelector('[data-webmcp-detail]')
+const approvalRegion = pageDocument?.querySelector('[data-approval-region]')
+const approvalMount = pageDocument?.querySelector('[data-approval-mount]')
+const approvalTemplate = pageDocument?.querySelector('[data-approval-template]')
+const rendezvousRegion = pageDocument?.querySelector('[data-rendezvous-region]')
+const rendezvousState = pageDocument?.querySelector('[data-rendezvous-state]')
+const rendezvousChallenge = pageDocument?.querySelector('[data-rendezvous-challenge]')
+const rendezvousExpiry = pageDocument?.querySelector('[data-rendezvous-expiry]')
+const callbackRegion = pageDocument?.querySelector('[data-callback-region]')
+const callbackTitle = pageDocument?.querySelector('[data-callback-title]')
+const callbackDetail = pageDocument?.querySelector('[data-callback-detail]')
+const callbackClose = pageDocument?.querySelector('[data-callback-close]')
 
-let activeExecution = null
-let pendingApproval = null
+let activeApprovalUi = null
 
 const localTimestamp = () => {
   const now = new Date()
@@ -44,9 +43,9 @@ const localTimestamp = () => {
 }
 
 const addTraceEvent = (message, kind = 'info') => {
-  if (!traceLog) return
+  if (!traceLog || !pageDocument) return
   traceLog.querySelector('[data-trace-placeholder]')?.remove()
-  const item = document.createElement('li')
+  const item = pageDocument.createElement('li')
   item.dataset.kind = kind
   item.textContent = `[${localTimestamp()}] ${message}`
   traceLog.append(item)
@@ -83,7 +82,7 @@ const requireValidAbortSignal = (signal) => {
 }
 
 const createAbortError = () => {
-  const error = new Error('Human approval cancelled because the tool execution was aborted')
+  const error = new Error('Gate H3A resource preparation was aborted before the tool returned')
   error.name = 'AbortError'
   return error
 }
@@ -102,6 +101,8 @@ const requireApprovalSurface = () => {
 
 const resetApprovalSurface = () => {
   requireApprovalSurface()
+  activeApprovalUi?.cleanup()
+  activeApprovalUi = null
   approvalRegion.hidden = true
   approvalMount.replaceChildren()
 }
@@ -147,110 +148,6 @@ const createApprovalCard = (acceptance) => {
   return { fragment, card, rejectButton, approveButton, status }
 }
 
-const requestHumanApproval = (
-  paymentRequired,
-  acceptance,
-  signal,
-  executionToken,
-  beginApprovedHandoff
-) => {
-  if (pendingApproval !== null) throw new Error('An approval decision is already pending.')
-  const requirementFingerprint = canonicalizeJson(paymentRequired)
-  const ui = createApprovalCard(acceptance)
-
-  approvalMount.replaceChildren(ui.fragment)
-  approvalRegion.hidden = false
-  ui.card.focus()
-
-  return new Promise((resolve, reject) => {
-    let settled = false
-
-    const cleanup = () => {
-      try { ui.rejectButton.removeEventListener('click', handleReject) } catch {}
-      try { ui.approveButton.removeEventListener('click', handleApprove) } catch {}
-      try { signal?.removeEventListener('abort', handleAbort) } catch {}
-      ui.rejectButton.disabled = true
-      ui.approveButton.disabled = true
-      if (pendingApproval?.token === executionToken) pendingApproval = null
-    }
-
-    const settle = (outcome, value) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      if (outcome === 'resolve') {
-        ui.card.dataset.approvalState = value
-        ui.status.textContent = value === 'approved'
-          ? 'Approval recorded. Opening the authorization-only Tonalli handoff; no payment is being sent.'
-          : 'Request rejected. No payment was authorized.'
-        resolve(value)
-        return
-      }
-      ui.card.dataset.approvalState = 'cancelled'
-      ui.status.textContent = errorMessage(value)
-      approvalRegion.hidden = true
-      approvalMount.replaceChildren()
-      reject(value)
-    }
-
-    const validateCurrentRequest = () => {
-      if (
-        pendingApproval?.token !== executionToken ||
-        pendingApproval.requirement !== paymentRequired ||
-        pendingApproval.fingerprint !== requirementFingerprint ||
-        canonicalizeJson(paymentRequired) !== requirementFingerprint
-      ) {
-        settle('reject', new Error('Gate H3A approval state no longer matches the validated payment requirement'))
-        return false
-      }
-      return true
-    }
-
-    function handleReject () {
-      if (settled || !validateCurrentRequest()) return
-      settle('resolve', 'rejected')
-    }
-
-    function handleApprove () {
-      if (settled || !validateCurrentRequest()) return
-      try {
-        beginApprovedHandoff()
-      } catch (error) {
-        settle('reject', error)
-        return
-      }
-      settle('resolve', 'approved')
-    }
-
-    function handleAbort () {
-      if (settled) return
-      addTraceEvent('Human approval cancelled: execution aborted', 'error')
-      settle('reject', createAbortError())
-    }
-
-    pendingApproval = {
-      token: executionToken,
-      requirement: paymentRequired,
-      fingerprint: requirementFingerprint
-    }
-
-    try {
-      ui.rejectButton.addEventListener('click', handleReject)
-      ui.approveButton.addEventListener('click', handleApprove)
-      signal?.addEventListener('abort', handleAbort, { once: true })
-    } catch (error) {
-      settle('reject', new Error(`Gate H3A approval setup failed: ${errorMessage(error)}`))
-      return
-    }
-
-    if (signal?.aborted) {
-      handleAbort()
-      return
-    }
-    addTraceEvent('Human approval required')
-  })
-}
-
 const updateRendezvousUi = (snapshot) => {
   if (!rendezvousRegion || !rendezvousState || !rendezvousChallenge || !rendezvousExpiry) return
   rendezvousRegion.hidden = snapshot.state === 'idle'
@@ -262,86 +159,198 @@ const updateRendezvousUi = (snapshot) => {
     : new Date(snapshot.expiresAt * 1_000).toLocaleTimeString()
 }
 
-const h3cBridge = createH3CBridge({ addTraceEvent, onStateChange: updateRendezvousUi })
-
-const executeResourceTool = async (input, options = {}) => {
-  requireEmptyInput(input)
-  addTraceEvent(`WebMCP tool invoked: ${RESOURCE_TOOL_NAME}`)
-
-  if (pendingApproval !== null) {
-    const error = new Error('An approval decision is already pending.')
-    addTraceEvent(`Tool execution failed: ${error.message}`, 'error')
-    throw error
-  }
-  if (activeExecution !== null) {
-    const error = new Error('A Gate H3C tool invocation is already active.')
-    addTraceEvent(`Tool execution failed: ${error.message}`, 'error')
-    throw error
-  }
-  if (h3cBridge.hasLiveRendezvous()) {
-    const error = new Error('An H3C authorization rendezvous is already pending.')
-    addTraceEvent(`Tool execution failed: ${error.message}`, 'error')
-    throw error
-  }
-
-  const executionToken = Symbol('gate-h3c-execution')
-  activeExecution = executionToken
-  try {
-    resetApprovalSurface()
-    requireValidAbortSignal(options.signal)
-
-    const fetchOptions = { cache: 'no-store', redirect: 'error' }
-    if (options.signal) fetchOptions.signal = options.signal
-    const response = await fetch(LIVE_RESOURCE_URL, fetchOptions)
-    if (response.status !== 402) {
-      throw new Error(`Expected HTTP 402 Payment Required; received HTTP ${response.status}`)
-    }
-    addTraceEvent('← HTTP 402 Payment Required', 'success')
-
-    const encodedHeader = response.headers.get('PAYMENT-REQUIRED')
-    if (!encodedHeader) throw new Error('PAYMENT-REQUIRED response header is missing')
-    const paymentRequired = decodePaymentRequiredHeader(encodedHeader)
-    const acceptance = validatePaymentRequired(paymentRequired)
-    addTraceEvent('PAYMENT-REQUIRED header decoded & validated', 'success')
-    addTraceEvent(`Price: ${acceptance.extra.displayAmount}`, 'success')
-
-    let handoffPromise = null
-    const decision = await requestHumanApproval(
-      paymentRequired,
-      acceptance,
-      options.signal,
-      executionToken,
-      () => {
-        addTraceEvent('Human decision: APPROVED')
-        handoffPromise = h3cBridge.startHandoff({ paymentRequired, signal: options.signal })
-      }
-    )
-
-    if (decision === 'rejected') {
-      addTraceEvent('Human decision: REJECTED')
-      addTraceEvent('STOP - Payment not authorized')
-      return {
-        status: 'payment_rejected',
-        gate: 'H3A',
-        httpStatus: 402,
-        message: 'The human rejected the experimental 100 XEC payment request. No payment was performed.',
-        approval: {
-          required_amount: acceptance.extra.displayAmount,
-          approved: false
-        },
-        payment: { performed: false }
-      }
-    }
-    if (decision !== 'approved') throw new Error('Gate H3A produced an invalid approval decision')
-    if (!handoffPromise) throw new Error('Gate H3C handoff did not start from the approval gesture')
-    return await handoffPromise
-  } catch (error) {
-    addTraceEvent(`Tool execution failed: ${errorMessage(error)}`, 'error')
-    throw error
-  } finally {
-    if (activeExecution === executionToken) activeExecution = null
+const updatePageSessionUi = (snapshot) => {
+  updateRendezvousUi(snapshot)
+  const mounted = activeApprovalUi
+  if (!mounted || mounted.binding.generation !== snapshot.generation) return
+  if (snapshot.state === 'handoff-opening') {
+    mounted.ui.card.dataset.approvalState = 'handoff-opening'
+    mounted.ui.status.textContent = 'Approval recorded. Opening the authorization-only Tonalli handoff; no payment is being sent.'
+  } else if (snapshot.state === 'awaiting-tonalli') {
+    mounted.ui.card.dataset.approvalState = 'awaiting-tonalli'
+    mounted.ui.status.textContent = 'Approval recorded. Awaiting the separate Tonalli authorization proof.'
+  } else if (snapshot.state === 'verified') {
+    mounted.ui.card.dataset.approvalState = 'verified'
+    mounted.ui.status.textContent = 'Tonalli authorization proof verified. No payment was performed.'
+  } else if (snapshot.state === 'rejected') {
+    mounted.ui.card.dataset.approvalState = 'rejected'
+    mounted.ui.status.textContent = snapshot.challengeId === null
+      ? 'Request rejected. No payment was authorized.'
+      : 'Tonalli authorization request rejected. No payment was performed.'
+  } else if (snapshot.state === 'failed' || snapshot.state === 'expired') {
+    mounted.ui.card.dataset.approvalState = snapshot.state
+    mounted.ui.status.textContent = snapshot.state === 'expired'
+      ? 'The authorization-only handoff expired. No payment was performed.'
+      : 'The authorization-only handoff failed safely. No payment was performed.'
   }
 }
+
+const h3cBridge = createH3CBridge({ addTraceEvent, onStateChange: updatePageSessionUi })
+
+const installApprovalSession = ({ acceptance, binding }) => {
+  const ui = createApprovalCard(acceptance)
+  resetApprovalSurface()
+  let decided = false
+
+  const removeListeners = () => {
+    try { ui.rejectButton.removeEventListener('click', handleReject) } catch {}
+    try { ui.approveButton.removeEventListener('click', handleApprove) } catch {}
+  }
+
+  const lockControls = () => {
+    removeListeners()
+    ui.rejectButton.disabled = true
+    ui.approveButton.disabled = true
+  }
+
+  const failClosed = (error) => {
+    decided = true
+    lockControls()
+    ui.card.dataset.approvalState = 'failed'
+    ui.status.textContent = `Approval stopped safely: ${errorMessage(error)}`
+    try { h3cBridge.failApprovalSession(binding, error) } catch {}
+  }
+
+  function handleReject () {
+    if (decided) return
+    try {
+      h3cBridge.validateApproval(binding)
+      decided = true
+      lockControls()
+      h3cBridge.rejectApproval(binding)
+      ui.card.dataset.approvalState = 'rejected'
+      ui.status.textContent = 'Request rejected. No payment was authorized.'
+    } catch (error) {
+      failClosed(error)
+    }
+  }
+
+  function handleApprove () {
+    if (decided) return
+    try {
+      h3cBridge.validateApproval(binding)
+      decided = true
+      lockControls()
+      ui.card.dataset.approvalState = 'handoff-opening'
+      ui.status.textContent = 'Approval recorded. Opening the authorization-only Tonalli handoff; no payment is being sent.'
+      addTraceEvent('Human decision: APPROVED')
+      const handoff = h3cBridge.startHandoff(binding)
+      void handoff.catch((error) => {
+        if (activeApprovalUi?.binding.generation !== binding.generation) return
+        ui.card.dataset.approvalState = 'failed'
+        ui.status.textContent = `Authorization handoff stopped safely: ${errorMessage(error)}`
+      })
+    } catch (error) {
+      failClosed(error)
+    }
+  }
+
+  try {
+    ui.rejectButton.addEventListener('click', handleReject)
+    ui.approveButton.addEventListener('click', handleApprove)
+    approvalMount.replaceChildren(ui.fragment)
+    approvalRegion.hidden = false
+    activeApprovalUi = {
+      binding,
+      ui,
+      cleanup: lockControls
+    }
+    ui.card.focus()
+    addTraceEvent('Human approval required')
+    return activeApprovalUi
+  } catch (error) {
+    failClosed(new Error(`Gate H3A approval setup failed: ${errorMessage(error)}`))
+    throw error
+  }
+}
+
+export const createResourceToolExecutor = ({
+  bridge,
+  fetchImplementation,
+  renderApproval,
+  traceEvent = () => {}
+}) => {
+  if (
+    !bridge ||
+    typeof bridge.createApprovalSession !== 'function' ||
+    typeof bridge.failApprovalSession !== 'function' ||
+    typeof bridge.hasLiveSession !== 'function' ||
+    typeof fetchImplementation !== 'function' ||
+    typeof renderApproval !== 'function' ||
+    typeof traceEvent !== 'function'
+  ) {
+    throw new Error('Gate H3A resource tool dependencies are incomplete')
+  }
+
+  let activeExecution = null
+  return async (input, options = {}) => {
+    requireEmptyInput(input)
+    traceEvent(`WebMCP tool invoked: ${RESOURCE_TOOL_NAME}`)
+
+    if (activeExecution !== null) {
+      const error = new Error('A Gate H3A resource invocation is already active.')
+      traceEvent(`Tool execution failed: ${error.message}`, 'error')
+      throw error
+    }
+    if (bridge.hasLiveSession()) {
+      const error = new Error('A human approval or H3C authorization session is already pending.')
+      traceEvent(`Tool execution failed: ${error.message}`, 'error')
+      throw error
+    }
+
+    const executionToken = Symbol('gate-h3a-resource-execution')
+    activeExecution = executionToken
+    let created = null
+    let mounted = null
+    try {
+      const signal = options?.signal
+      requireValidAbortSignal(signal)
+      if (signal?.aborted) throw createAbortError()
+
+      const fetchOptions = { cache: 'no-store', redirect: 'error' }
+      if (signal) fetchOptions.signal = signal
+      const response = await fetchImplementation(LIVE_RESOURCE_URL, fetchOptions)
+      if (signal?.aborted) throw createAbortError()
+      if (response.status !== 402) {
+        throw new Error(`Expected HTTP 402 Payment Required; received HTTP ${response.status}`)
+      }
+      traceEvent('← HTTP 402 Payment Required', 'success')
+
+      const encodedHeader = response.headers.get('PAYMENT-REQUIRED')
+      if (!encodedHeader) throw new Error('PAYMENT-REQUIRED response header is missing')
+      const paymentRequired = decodePaymentRequiredHeader(encodedHeader)
+      const acceptance = validatePaymentRequired(paymentRequired)
+      if (signal?.aborted) throw createAbortError()
+      traceEvent('PAYMENT-REQUIRED header decoded & validated', 'success')
+      traceEvent(`Price: ${acceptance.extra.displayAmount}`, 'success')
+
+      created = bridge.createApprovalSession({ paymentRequired })
+      mounted = renderApproval({ paymentRequired, acceptance, binding: created.binding })
+      if (signal?.aborted) {
+        const error = createAbortError()
+        try { mounted?.cleanup?.() } catch {}
+        bridge.failApprovalSession(created.binding, error)
+        throw error
+      }
+      return created.result
+    } catch (error) {
+      if (created && bridge.getSnapshot?.().state === 'approval-required') {
+        try { bridge.failApprovalSession(created.binding, error) } catch {}
+      }
+      traceEvent(`Tool execution failed: ${errorMessage(error)}`, 'error')
+      throw error
+    } finally {
+      if (activeExecution === executionToken) activeExecution = null
+    }
+  }
+}
+
+const executeResourceTool = createResourceToolExecutor({
+  bridge: h3cBridge,
+  fetchImplementation: globalThis.fetch.bind(globalThis),
+  renderApproval: installApprovalSession,
+  traceEvent: addTraceEvent
+})
 
 const executeResultTool = (input) => {
   requireEmptyInput(input)
@@ -389,7 +398,7 @@ const registerH3CTools = async () => {
     setCapabilityState(
       'ready',
       'Two WebMCP tools registered.',
-      'Gate H3C can initiate an authorization-only handoff and later read its ephemeral verified result.'
+      'The resource tool returns after creating page-owned approval state; the read-only result tool reports what happens afterward.'
     )
     addTraceEvent(`WebMCP tool registered: ${RESOURCE_TOOL_NAME}`, 'success')
     addTraceEvent(`WebMCP tool registered: ${RESULT_TOOL_NAME}`, 'success')
@@ -404,7 +413,8 @@ const registerH3CTools = async () => {
 }
 
 const setCallbackUi = (title, detail, state) => {
-  document.body.dataset.callbackMode = 'true'
+  if (!pageDocument) return
+  pageDocument.body.dataset.callbackMode = 'true'
   if (callbackRegion) callbackRegion.hidden = false
   if (callbackTitle) callbackTitle.textContent = title
   if (callbackDetail) callbackDetail.textContent = detail
@@ -433,7 +443,7 @@ const validAck = (message, callback) => {
 
 const runCallbackMode = (capture) => {
   if (!callbackRegion || !callbackTitle || !callbackDetail) {
-    document.body.textContent = 'No active H3C session accepted this callback.'
+    if (pageDocument) pageDocument.body.textContent = 'No active H3C session accepted this callback.'
     return
   }
   setCallbackUi(
@@ -441,7 +451,7 @@ const runCallbackMode = (capture) => {
     'Looking for the active, challenge-bound x402eCash session.',
     'delivering'
   )
-  callbackClose?.addEventListener('click', () => window.close(), { once: true })
+  callbackClose?.addEventListener('click', () => globalThis.window?.close(), { once: true })
 
   if (!capture.callback) {
     setCallbackUi(

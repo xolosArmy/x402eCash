@@ -1,16 +1,19 @@
 import {
   H3C_HANDOFF_PATH,
   H3C_HANDOFF_TIMEOUT_MS,
+  canonicalizeJson,
   createH3BRequest,
   h3cChannelName,
   isRecord,
   requireExactKeys,
-  sha256CanonicalJson
+  sha256CanonicalJson,
+  validatePaymentRequired
 } from './h3c-contract.js'
 import { verifySignedH3BProof } from './h3c-verify.js'
 
 export const H3C_STATES = Object.freeze([
   'idle',
+  'approval-required',
   'handoff-opening',
   'awaiting-tonalli',
   'proof-verifying',
@@ -20,32 +23,17 @@ export const H3C_STATES = Object.freeze([
   'expired'
 ])
 
-const LIVE_STATES = new Set(['handoff-opening', 'awaiting-tonalli', 'proof-verifying'])
+const LIVE_STATES = new Set(['approval-required', 'handoff-opening', 'awaiting-tonalli', 'proof-verifying'])
+const RENDEZVOUS_LIVE_STATES = new Set(['handoff-opening', 'awaiting-tonalli', 'proof-verifying'])
 const HANDOFF_OPENED_KEYS = Object.freeze(['type', 'challengeId'])
 const SIGNED_CALLBACK_KEYS = Object.freeze(['type', 'challengeId', 'status', 'proof'])
 const REJECTED_CALLBACK_KEYS = Object.freeze(['type', 'challengeId', 'status'])
+const APPROVAL_BINDING_KEYS = Object.freeze(['generation', 'paymentRequiredFingerprint'])
 
 const errorMessage = (error) => {
   if (error instanceof Error && error.message) return error.message
   if (typeof error === 'string' && error) return error
   return 'Unknown H3C error'
-}
-
-const createAbortError = () => {
-  const error = new Error('H3C handoff cancelled because the WebMCP execution was aborted')
-  error.name = 'AbortError'
-  return error
-}
-
-const requireAbortSignal = (signal) => {
-  if (signal === undefined || signal === null) return
-  if (
-    typeof signal.aborted !== 'boolean' ||
-    typeof signal.addEventListener !== 'function' ||
-    typeof signal.removeEventListener !== 'function'
-  ) {
-    throw new Error('Gate H3C received an invalid AbortSignal')
-  }
 }
 
 const exactMessage = (message, keys) => {
@@ -58,11 +46,33 @@ const exactMessage = (message, keys) => {
   }
 }
 
-const firstToolPendingResult = (rendezvous) => Object.freeze({
+const firstToolApprovalRequiredResult = () => Object.freeze({
+  status: 'approval_required',
+  gate: 'H3A',
+  httpStatus: 402,
+  message: 'The live 100 XEC requirement was validated and is awaiting a human decision. No payment was performed.',
+  approval: Object.freeze({
+    required: true,
+    decided: false,
+    required_amount: '100 XEC'
+  }),
+  payment: Object.freeze({ performed: false })
+})
+
+const resultToolApprovalRequiredResult = () => Object.freeze({
+  status: 'approval_required',
+  gate: 'H3A',
+  approval: Object.freeze({
+    required: true,
+    decided: false,
+    required_amount: '100 XEC'
+  }),
+  payment: Object.freeze({ performed: false })
+})
+
+const resultToolPendingResult = (rendezvous) => Object.freeze({
   status: 'authorization_pending',
   gate: 'H3C',
-  httpStatus: 402,
-  message: 'The 100 XEC requirement was approved and handed off to Tonalli for an authorization-only proof. No payment was performed.',
   challengeId: rendezvous.challengeId,
   authorization: Object.freeze({
     wallet: 'Tonalli',
@@ -74,12 +84,12 @@ const firstToolPendingResult = (rendezvous) => Object.freeze({
   transaction: Object.freeze({ created: false, broadcasted: false })
 })
 
-const resultToolPendingResult = (rendezvous) => Object.freeze({
-  status: 'authorization_pending',
-  gate: 'H3C',
-  challengeId: rendezvous.challengeId,
-  authorization: Object.freeze({ signed: false, verified: false, pending: true }),
-  payment: Object.freeze({ performed: false })
+const humanRejectedResult = () => Object.freeze({
+  status: 'authorization_rejected',
+  gate: 'H3A',
+  authorization: Object.freeze({ signed: false, verified: false }),
+  payment: Object.freeze({ performed: false }),
+  transaction: Object.freeze({ created: false, broadcasted: false })
 })
 
 const rejectedResult = (rendezvous) => Object.freeze({
@@ -124,6 +134,7 @@ export const createH3CBridge = ({
 } = {}) => {
   let rendezvous = null
   let starting = false
+  let nextGeneration = 1
 
   const notifyState = () => {
     try { onStateChange(api.getSnapshot()) } catch {}
@@ -153,6 +164,25 @@ export const createH3CBridge = ({
     setTimeoutImplementation(() => {
       if (rendezvous === current) closeChannel(current)
     }, 0)
+  }
+
+  const approvalBinding = (current) => Object.freeze({
+    generation: current.generation,
+    paymentRequiredFingerprint: current.paymentRequiredFingerprint
+  })
+
+  const requireCurrentApproval = (binding) => {
+    requireExactKeys(binding, APPROVAL_BINDING_KEYS, 'H3A approval binding')
+    if (
+      !rendezvous ||
+      rendezvous.state !== 'approval-required' ||
+      rendezvous.generation !== binding.generation ||
+      rendezvous.paymentRequiredFingerprint !== binding.paymentRequiredFingerprint ||
+      canonicalizeJson(rendezvous.paymentRequired) !== rendezvous.paymentRequiredFingerprint
+    ) {
+      throw new Error('Gate H3A approval state no longer matches the validated payment requirement')
+    }
+    return rendezvous
   }
 
   const failCurrent = (current, error, trace = true) => {
@@ -190,7 +220,7 @@ export const createH3CBridge = ({
   }
 
   const expireCurrent = (current, acknowledge = false) => {
-    if (rendezvous !== current || !LIVE_STATES.has(current.state)) return
+    if (rendezvous !== current || !RENDEZVOUS_LIVE_STATES.has(current.state)) return
     current.callbackConsumed = true
     current.state = 'expired'
     current.error = 'H3C authorization request expired'
@@ -324,36 +354,107 @@ export const createH3CBridge = ({
   }
 
   const replaceTerminalRendezvous = () => {
-    if (!rendezvous || LIVE_STATES.has(rendezvous.state)) return
+    if (!rendezvous) return false
+    if (LIVE_STATES.has(rendezvous.state) || starting) {
+      throw new Error('A Gate H3A/H3C session is already pending.')
+    }
     clearExpiry(rendezvous)
     closeChannel(rendezvous)
     rendezvous = null
     notifyState()
+    addTraceEvent('Previous terminal authorization session reset for a new validated resource request')
+    return true
   }
 
-  const startHandoff = async ({ paymentRequired, signal } = {}) => {
-    requireAbortSignal(signal)
+  const createApprovalSession = ({ paymentRequired } = {}) => {
+    validatePaymentRequired(paymentRequired)
     if (starting || (rendezvous && LIVE_STATES.has(rendezvous.state))) {
-      throw new Error('An H3C authorization rendezvous is already pending.')
+      throw new Error('A Gate H3A/H3C session is already pending.')
     }
-    if (typeof BroadcastChannelImplementation !== 'function') {
-      throw new Error('BroadcastChannel is unavailable; H3C cannot start safely.')
+    const createdAt = nowSeconds()
+    if (!Number.isSafeInteger(createdAt)) {
+      throw new Error('Gate H3A approval createdAt must be a safe integer')
     }
-    if (!cryptoImplementation?.subtle || typeof cryptoImplementation.subtle.digest !== 'function') {
-      throw new Error('Web Crypto SHA-256 is unavailable; H3C cannot start safely.')
-    }
-    if (signal?.aborted) throw createAbortError()
-
+    const paymentRequiredFingerprint = canonicalizeJson(paymentRequired)
     replaceTerminalRendezvous()
+    const current = {
+      generation: nextGeneration,
+      createdAt,
+      paymentRequired,
+      paymentRequiredFingerprint,
+      challengeId: null,
+      issuedAt: null,
+      expiresAt: null,
+      canonicalRequest: null,
+      encodedRequest: null,
+      paymentRequiredSha256: null,
+      state: 'approval-required',
+      callbackConsumed: false,
+      channel: null,
+      expiryTimer: null,
+      handshakeResolve: null,
+      result: null,
+      error: null
+    }
+    nextGeneration += 1
+    rendezvous = current
+    notifyState()
+    return Object.freeze({
+      binding: approvalBinding(current),
+      result: firstToolApprovalRequiredResult()
+    })
+  }
+
+  const validateApproval = (binding) => {
+    const current = requireCurrentApproval(binding)
+    return Object.freeze({
+      generation: current.generation,
+      createdAt: current.createdAt,
+      paymentRequiredFingerprint: current.paymentRequiredFingerprint,
+      state: current.state
+    })
+  }
+
+  const rejectApproval = (binding) => {
+    const current = requireCurrentApproval(binding)
+    current.result = humanRejectedResult()
+    transition(current, 'rejected')
+    addTraceEvent('Human decision: REJECTED')
+    addTraceEvent('STOP - Payment not authorized')
+    return current.result
+  }
+
+  const failApprovalSession = (binding, error) => {
+    requireExactKeys(binding, APPROVAL_BINDING_KEYS, 'H3A approval binding')
+    if (
+      !rendezvous ||
+      rendezvous.state !== 'approval-required' ||
+      rendezvous.generation !== binding.generation ||
+      rendezvous.paymentRequiredFingerprint !== binding.paymentRequiredFingerprint
+    ) {
+      throw new Error('Gate H3A approval session is no longer current')
+    }
+    const current = rendezvous
+    failCurrent(current, error)
+  }
+
+  const startHandoff = async (binding) => {
+    const approval = requireCurrentApproval(binding)
+    if (starting) throw new Error('An H3C authorization rendezvous is already pending.')
     starting = true
-    let current
+    let current = approval
     try {
+      if (typeof BroadcastChannelImplementation !== 'function') {
+        throw new Error('BroadcastChannel is unavailable; H3C cannot start safely.')
+      }
+      if (!cryptoImplementation?.subtle || typeof cryptoImplementation.subtle.digest !== 'function') {
+        throw new Error('Web Crypto SHA-256 is unavailable; H3C cannot start safely.')
+      }
       const created = createH3BRequest({
-        paymentRequired,
+        paymentRequired: current.paymentRequired,
         nowSeconds: nowSeconds(),
         cryptoImplementation
       })
-      if (signal?.aborted) throw createAbortError()
 
       let channel
       try {
@@ -362,26 +463,21 @@ export const createH3CBridge = ({
         throw new Error('BroadcastChannel initialization failed; H3C stopped safely.')
       }
 
-      current = {
-        challengeId: created.request.challengeId,
-        issuedAt: created.request.issuedAt,
-        expiresAt: created.request.expiresAt,
-        paymentRequired,
-        canonicalRequest: created.canonicalRequest,
-        encodedRequest: created.encodedRequest,
-        paymentRequiredSha256: null,
-        state: 'handoff-opening',
-        callbackConsumed: false,
-        channel,
-        expiryTimer: null,
-        handshakeResolve: null,
-        result: null,
-        error: null
-      }
-      rendezvous = current
+      current.challengeId = created.request.challengeId
+      current.issuedAt = created.request.issuedAt
+      current.expiresAt = created.request.expiresAt
+      current.canonicalRequest = created.canonicalRequest
+      current.encodedRequest = created.encodedRequest
+      current.paymentRequiredSha256 = null
+      current.callbackConsumed = false
+      current.channel = channel
+      current.expiryTimer = null
+      current.handshakeResolve = null
+      current.result = null
+      current.error = null
+      transition(current, 'handoff-opening')
       channel.onmessage = (event) => receiveChannelMessage(current, event.data)
       scheduleExpiry(current)
-      notifyState()
       addTraceEvent('H3B challenge created')
 
       const handoffAcknowledgement = new Promise((resolve, reject) => {
@@ -390,10 +486,8 @@ export const createH3CBridge = ({
           settle(reject, new Error('Tonalli authorization handoff did not acknowledge opening.'))
         }, handoffTimeoutMs)
 
-        const handleAbort = () => settle(reject, createAbortError())
         const cleanup = () => {
           clearTimeoutImplementation(timeout)
-          try { signal?.removeEventListener('abort', handleAbort) } catch {}
           current.handshakeResolve = null
         }
         const settle = (handler, value) => {
@@ -408,24 +502,21 @@ export const createH3CBridge = ({
           settle(resolve)
         }
         try {
-          signal?.addEventListener('abort', handleAbort, { once: true })
           openWindow(`${handoffPath}#request=${created.encodedRequest}`)
         } catch (error) {
           settle(reject, new Error(`Tonalli authorization handoff could not open: ${errorMessage(error)}`))
           return
         }
-        if (signal?.aborted) handleAbort()
       })
 
       const paymentRequiredSha256Promise = sha256CanonicalJson(
-        paymentRequired,
+        current.paymentRequired,
         cryptoImplementation
       )
       const [, paymentRequiredSha256] = await Promise.all([
         handoffAcknowledgement,
         paymentRequiredSha256Promise
       ])
-      if (signal?.aborted) throw createAbortError()
       if (nowSeconds() >= current.expiresAt) {
         expireCurrent(current)
         throw new Error('H3C authorization request expired before handoff acknowledgement')
@@ -439,7 +530,7 @@ export const createH3CBridge = ({
 
       addTraceEvent('Tonalli authorization handoff opened', 'success')
       addTraceEvent('STOP - Awaiting Tonalli authorization proof')
-      return firstToolPendingResult(current)
+      return resultToolPendingResult(current)
     } catch (error) {
       if (current && current.state !== 'expired') failCurrent(current, error)
       throw error
@@ -449,30 +540,59 @@ export const createH3CBridge = ({
   }
 
   const readResult = () => {
-    if (!rendezvous) throw new Error('No ephemeral H3C authorization session exists.')
-    if (LIVE_STATES.has(rendezvous.state) && nowSeconds() >= rendezvous.expiresAt) {
+    if (!rendezvous) throw new Error('No ephemeral H3A/H3C authorization session exists.')
+    if (
+      RENDEZVOUS_LIVE_STATES.has(rendezvous.state) &&
+      nowSeconds() >= rendezvous.expiresAt
+    ) {
       expireCurrent(rendezvous)
+    }
+    if (rendezvous.state === 'approval-required') {
+      return resultToolApprovalRequiredResult()
     }
     if (rendezvous.state === 'verified' || rendezvous.state === 'rejected') {
       if (!rendezvous.result) throw new Error('H3C terminal state is missing its result.')
       return rendezvous.result
     }
-    if (LIVE_STATES.has(rendezvous.state)) return resultToolPendingResult(rendezvous)
+    if (RENDEZVOUS_LIVE_STATES.has(rendezvous.state)) return resultToolPendingResult(rendezvous)
     if (rendezvous.state === 'expired') throw new Error('The H3C authorization session expired.')
     throw new Error(`The H3C authorization session failed closed: ${rendezvous.error ?? 'unknown error'}`)
   }
 
+  const hasLiveSession = () => {
+    if (
+      rendezvous &&
+      RENDEZVOUS_LIVE_STATES.has(rendezvous.state) &&
+      nowSeconds() >= rendezvous.expiresAt
+    ) {
+      expireCurrent(rendezvous)
+    }
+    return starting || Boolean(rendezvous && LIVE_STATES.has(rendezvous.state))
+  }
+
   const api = Object.freeze({
+    createApprovalSession,
+    validateApproval,
+    rejectApproval,
+    failApprovalSession,
     startHandoff,
     readResult,
+    hasLiveSession,
     hasLiveRendezvous: () => {
-      if (rendezvous && LIVE_STATES.has(rendezvous.state) && nowSeconds() >= rendezvous.expiresAt) {
+      if (
+        rendezvous &&
+        RENDEZVOUS_LIVE_STATES.has(rendezvous.state) &&
+        nowSeconds() >= rendezvous.expiresAt
+      ) {
         expireCurrent(rendezvous)
       }
-      return starting || Boolean(rendezvous && LIVE_STATES.has(rendezvous.state))
+      return starting || Boolean(rendezvous && RENDEZVOUS_LIVE_STATES.has(rendezvous.state))
     },
     getSnapshot: () => Object.freeze({
       state: starting && !rendezvous ? 'handoff-opening' : (rendezvous?.state ?? 'idle'),
+      generation: rendezvous?.generation ?? null,
+      createdAt: rendezvous?.createdAt ?? null,
+      paymentRequiredFingerprint: rendezvous?.paymentRequiredFingerprint ?? null,
       challengeId: rendezvous?.challengeId ?? null,
       issuedAt: rendezvous?.issuedAt ?? null,
       expiresAt: rendezvous?.expiresAt ?? null,
