@@ -1,0 +1,11 @@
+{
+  "status": "unlocked",
+  "message": "Gate H1 mock resource unlocked. No XEC payment was performed.",
+  "payment": {
+    "mode": "mock",
+    "performed": false,
+    "network": "eCash",
+    "txid": null,
+    "amount": "0"
+  }
+}
