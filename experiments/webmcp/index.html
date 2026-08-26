@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Gate H2B — Live HTTP 402 Interception | x402eCash</title>
-  <meta name="description" content="A static, read-only WebMCP experiment that intercepts and validates a live HTTP 402 experimental XEC payment requirement without performing a payment.">
+  <title>Gate H3A — Human Payment Approval | x402eCash</title>
+  <meta name="description" content="A static WebMCP experiment that validates a live HTTP 402 experimental XEC payment requirement and pauses for an explicit human decision without signing or paying.">
   <meta name="theme-color" content="#07090d">
   <meta name="color-scheme" content="dark">
   <link rel="canonical" href="https://x402.ecash.mx/experiments/webmcp/">
@@ -14,11 +14,11 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="x402eCash">
   <meta property="og:url" content="https://x402.ecash.mx/experiments/webmcp/">
-  <meta property="og:title" content="Gate H2B — Live HTTP 402 Interception">
-  <meta property="og:description" content="A truthful WebMCP experiment that validates a live HTTP 402 experimental XEC payment requirement without performing a payment.">
+  <meta property="og:title" content="Gate H3A — Human Payment Approval">
+  <meta property="og:description" content="A truthful WebMCP experiment that validates a live HTTP 402 requirement and pauses for human approval without signing or paying.">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Gate H2B — Live HTTP 402 Interception">
-  <meta name="twitter:description" content="A truthful WebMCP experiment that validates a live HTTP 402 experimental XEC payment requirement without performing a payment.">
+  <meta name="twitter:title" content="Gate H3A — Human Payment Approval">
+  <meta name="twitter:description" content="A truthful WebMCP experiment that validates a live HTTP 402 requirement and pauses for human approval without signing or paying.">
 </head>
 <body class="experiment-page">
   <a class="skip-link" href="#main">Skip to content</a>
@@ -45,25 +45,27 @@
         <div class="experiment-intro">
           <div class="lab-badge">Static browser experiment</div>
           <p class="eyebrow">x402eCash · WebMCP Challenge</p>
-          <h1 id="gate-title">Gate H2B — Live HTTP 402 Interception</h1>
-          <p class="hero-subtitle">Discover a read-only browser tool, invoke it, and inspect a live machine-readable payment requirement.</p>
-          <p class="truth-notice"><strong>Real HTTP 402</strong> — the public resource server requires an experimental 100 XEC payment. No wallet, signing, transaction, blockchain settlement, or XEC transfer occurs in this gate.</p>
+          <h1 id="gate-title">Gate H3A — Human Payment Approval</h1>
+          <p class="hero-subtitle">Discover a browser tool, validate its live machine-readable payment requirement, and make an explicit human decision.</p>
+          <p class="truth-notice"><strong>Real HTTP 402. Experimental 100 XEC requirement.</strong> WebMCP requests human authorization, but approval does not execute a payment. Tonalli signing is not integrated yet.</p>
 
-          <div class="experiment-path" aria-label="Gate H2B target execution path">
+          <div class="experiment-path" aria-label="Gate H3A target execution path">
             <span>Agent discovers tool</span>
-            <span aria-hidden="true">→</span>
-            <span>Live HTTPS request</span>
             <span aria-hidden="true">→</span>
             <span>HTTP 402</span>
             <span aria-hidden="true">→</span>
             <span>PAYMENT-REQUIRED</span>
             <span aria-hidden="true">→</span>
-            <span>100 XEC required</span>
+            <span>100 XEC</span>
+            <span aria-hidden="true">→</span>
+            <span>Human approval</span>
+            <span aria-hidden="true">→</span>
+            <span>Approve / Reject</span>
             <span aria-hidden="true">→</span>
             <span>STOP</span>
           </div>
 
-          <p class="agent-prompt">In a WebMCP-aware browser, ask the agent to invoke <code>get_paid_xec_resource</code>. The trace will show the live 402 response and the validated price only if the public server returns the exact reviewed contract.</p>
+          <p class="agent-prompt">In a WebMCP-aware browser, ask the agent to invoke <code>get_paid_xec_resource</code>. After the exact reviewed 402 contract is validated, the invocation remains pending until you approve, reject, or cancel it.</p>
         </div>
 
         <aside class="capability-panel" aria-labelledby="capability-title">
@@ -80,11 +82,42 @@
             <div><dt>Access</dt><dd>Read only</dd></div>
             <div><dt>Resource</dt><dd><code>api.x402.ecash.mx/v1/resource/demo</code></dd></div>
             <div><dt>Expected</dt><dd>HTTP 402</dd></div>
+            <div><dt>Decision</dt><dd>Human required</dd></div>
             <div><dt>Payment</dt><dd>Not performed</dd></div>
           </dl>
         </aside>
       </div>
     </section>
+
+    <section class="section section-border approval-section" data-approval-region hidden aria-label="Human payment approval">
+      <div class="container">
+        <div data-approval-mount></div>
+      </div>
+    </section>
+
+    <template data-approval-template>
+      <article class="approval-card" data-approval-card tabindex="-1" aria-labelledby="approval-title" aria-describedby="approval-explainer">
+        <div class="approval-header">
+          <p class="section-kicker">Human checkpoint</p>
+          <h2 id="approval-title">Payment approval required</h2>
+          <p id="approval-explainer">Approval in Gate H3A does not sign or send a payment. It only records the user's decision for the future Tonalli integration.</p>
+        </div>
+
+        <dl class="approval-details">
+          <div><dt>Amount</dt><dd data-approval-amount></dd></div>
+          <div><dt>Network</dt><dd><code data-approval-network></code></dd></div>
+          <div><dt>Asset</dt><dd data-approval-asset></dd></div>
+          <div class="approval-destination"><dt>Destination</dt><dd><code data-approval-destination></code></dd></div>
+          <div><dt>Experimental</dt><dd data-approval-experimental></dd></div>
+        </dl>
+
+        <div class="approval-actions" role="group" aria-label="Payment approval decision">
+          <button class="button button-secondary" type="button" data-approval-reject aria-describedby="approval-explainer">Reject</button>
+          <button class="button button-primary" type="button" data-approval-approve aria-describedby="approval-explainer">Approve 100 XEC</button>
+        </div>
+        <p class="approval-status" data-approval-status aria-live="polite">Awaiting a human decision. No default is selected.</p>
+      </article>
+    </template>
 
     <section class="section section-border trace-section" id="trace" aria-labelledby="trace-title">
       <div class="container">
@@ -109,9 +142,9 @@
         <div class="section-heading">
           <div>
             <p class="section-kicker">Gate contract</p>
-            <h2 id="contract-title">One live request. Then stop.</h2>
+            <h2 id="contract-title">One live request. One human decision. Then stop.</h2>
           </div>
-          <p>The tool accepts an empty object, makes one uncached HTTPS request, requires HTTP 402, decodes and strictly validates <code>PAYMENT-REQUIRED</code>, and reports the experimental requirement without sending payment data.</p>
+          <p>The tool accepts an empty object, makes one uncached HTTPS request, requires HTTP 402, strictly validates <code>PAYMENT-REQUIRED</code>, and pauses until the human approves or rejects. Neither decision sends payment data.</p>
         </div>
 
         <div class="grid-3 gate-grid">
@@ -127,8 +160,8 @@
           </article>
           <article class="card">
             <span class="card-number">03</span>
-            <h3>Validate and stop</h3>
-            <p>Missing or malformed protocol data fails visibly. A valid response reports 100 XEC as required, records that no payment occurred, and stops.</p>
+            <h3>Human boundary</h3>
+            <p>Only a valid 100 XEC requirement reveals the decision controls. Approval authorizes proceeding toward a future signing stage; rejection stops the flow. Neither action signs or pays.</p>
           </article>
         </div>
 
@@ -139,7 +172,7 @@
 
   <footer class="site-footer">
     <div class="container footer-grid">
-      <p><strong>Gate H2B</strong> prepares browser-side tool discovery and live HTTP 402 interception. It does not demonstrate an XEC payment, transaction, verification, settlement, or resource unlock.</p>
+      <p><strong>Gate H3A</strong> adds explicit human authorization after live HTTP 402 validation. It does not demonstrate an XEC payment, signature, transaction, settlement, or resource unlock.</p>
       <div class="footer-links">
         <a href="/">Public lab</a>
         <a href="https://github.com/xolosArmy/x402eCash">Repository</a>

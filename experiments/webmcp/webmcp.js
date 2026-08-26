@@ -1,5 +1,5 @@
 const TOOL_NAME = 'get_paid_xec_resource'
-const TOOL_DESCRIPTION = 'Request the live x402eCash WebMCP demo resource and report its experimental XEC payment requirement. No payment is performed in Gate H2B.'
+const TOOL_DESCRIPTION = 'Request the live x402eCash demo resource, validate its experimental XEC payment requirement, and ask the human to approve or reject proceeding. No signing or payment is performed in Gate H3A.'
 const LIVE_RESOURCE_URL = 'https://api.x402.ecash.mx/v1/resource/demo'
 const EXPECTED_PAYMENT_ERROR = 'PAYMENT-SIGNATURE header is required'
 const EXPECTED_PAY_TO = 'ecash:qqg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyquz9y96w'
@@ -8,6 +8,12 @@ const traceLog = document.querySelector('[data-trace-log]')
 const capabilityState = document.querySelector('[data-webmcp-state]')
 const capabilityStatus = document.querySelector('[data-webmcp-status]')
 const capabilityDetail = document.querySelector('[data-webmcp-detail]')
+const approvalRegion = document.querySelector('[data-approval-region]')
+const approvalMount = document.querySelector('[data-approval-mount]')
+const approvalTemplate = document.querySelector('[data-approval-template]')
+
+let activeExecution = null
+let pendingApproval = null
 
 const localTimestamp = () => {
   const now = new Date()
@@ -121,10 +127,211 @@ const validatePaymentRequired = (paymentRequired) => {
   return acceptance
 }
 
-const executeGateH2B = async (_input, options = {}) => {
+const requireApprovalSurface = () => {
+  if (
+    !approvalRegion ||
+    !approvalMount ||
+    typeof approvalMount.replaceChildren !== 'function' ||
+    !approvalTemplate ||
+    !approvalTemplate.content ||
+    typeof approvalTemplate.content.cloneNode !== 'function'
+  ) {
+    throw new Error('Gate H3A approval UI is unavailable')
+  }
+}
+
+const resetApprovalSurface = () => {
+  requireApprovalSurface()
+  approvalRegion.hidden = true
+  approvalMount.replaceChildren()
+}
+
+const requireValidAbortSignal = (signal) => {
+  if (signal === undefined || signal === null) return
+  if (
+    typeof signal.aborted !== 'boolean' ||
+    typeof signal.addEventListener !== 'function' ||
+    typeof signal.removeEventListener !== 'function'
+  ) {
+    throw new Error('Gate H3A received an invalid AbortSignal')
+  }
+}
+
+const createAbortError = () => {
+  const error = new Error('Human approval cancelled because the tool execution was aborted')
+  error.name = 'AbortError'
+  return error
+}
+
+const createApprovalCard = (acceptance) => {
+  requireApprovalSurface()
+
+  const fragment = approvalTemplate.content.cloneNode(true)
+  const card = fragment.querySelector('[data-approval-card]')
+  const amount = fragment.querySelector('[data-approval-amount]')
+  const network = fragment.querySelector('[data-approval-network]')
+  const asset = fragment.querySelector('[data-approval-asset]')
+  const destination = fragment.querySelector('[data-approval-destination]')
+  const experimental = fragment.querySelector('[data-approval-experimental]')
+  const rejectButton = fragment.querySelector('[data-approval-reject]')
+  const approveButton = fragment.querySelector('[data-approval-approve]')
+  const status = fragment.querySelector('[data-approval-status]')
+
+  if (
+    !card ||
+    !amount ||
+    !network ||
+    !asset ||
+    !destination ||
+    !experimental ||
+    !rejectButton ||
+    !approveButton ||
+    !status ||
+    typeof card.focus !== 'function' ||
+    typeof rejectButton.addEventListener !== 'function' ||
+    typeof rejectButton.removeEventListener !== 'function' ||
+    typeof approveButton.addEventListener !== 'function' ||
+    typeof approveButton.removeEventListener !== 'function'
+  ) {
+    throw new Error('Gate H3A approval UI is incomplete')
+  }
+
+  amount.textContent = acceptance.extra.displayAmount
+  network.textContent = acceptance.network
+  asset.textContent = acceptance.asset
+  destination.textContent = acceptance.payTo
+  experimental.textContent = acceptance.extra.experimental ? 'Yes' : 'No'
+  approveButton.textContent = `Approve ${acceptance.extra.displayAmount}`
+
+  return {
+    fragment,
+    card,
+    rejectButton,
+    approveButton,
+    status
+  }
+}
+
+const requestHumanApproval = (paymentRequired, acceptance, signal, executionToken) => {
+  if (pendingApproval !== null) {
+    throw new Error('An approval decision is already pending.')
+  }
+
+  const requirementFingerprint = JSON.stringify(paymentRequired)
+  const ui = createApprovalCard(acceptance)
+
+  approvalMount.replaceChildren(ui.fragment)
+  approvalRegion.hidden = false
+  ui.card.focus()
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+
+    const cleanup = () => {
+      try { ui.rejectButton.removeEventListener('click', handleReject) } catch {}
+      try { ui.approveButton.removeEventListener('click', handleApprove) } catch {}
+      try { signal?.removeEventListener('abort', handleAbort) } catch {}
+      ui.rejectButton.disabled = true
+      ui.approveButton.disabled = true
+      if (pendingApproval?.token === executionToken) pendingApproval = null
+    }
+
+    const settle = (outcome, value) => {
+      if (settled) return
+      settled = true
+      cleanup()
+
+      if (outcome === 'resolve') {
+        ui.card.dataset.approvalState = value
+        ui.status.textContent = value === 'approved'
+          ? 'Approval recorded. No signing or payment was performed.'
+          : 'Request rejected. No payment was authorized.'
+        resolve(value)
+        return
+      }
+
+      ui.card.dataset.approvalState = 'cancelled'
+      ui.status.textContent = errorMessage(value)
+      approvalRegion.hidden = true
+      approvalMount.replaceChildren()
+      reject(value)
+    }
+
+    const validateCurrentRequest = () => {
+      if (
+        pendingApproval?.token !== executionToken ||
+        pendingApproval.requirement !== paymentRequired ||
+        pendingApproval.fingerprint !== requirementFingerprint ||
+        JSON.stringify(paymentRequired) !== requirementFingerprint
+      ) {
+        settle('reject', new Error('Gate H3A approval state no longer matches the validated payment requirement'))
+        return false
+      }
+      return true
+    }
+
+    function handleReject () {
+      if (settled || !validateCurrentRequest()) return
+      settle('resolve', 'rejected')
+    }
+
+    function handleApprove () {
+      if (settled || !validateCurrentRequest()) return
+      settle('resolve', 'approved')
+    }
+
+    function handleAbort () {
+      if (settled) return
+      addTraceEvent('Human approval cancelled: execution aborted', 'error')
+      settle('reject', createAbortError())
+    }
+
+    pendingApproval = {
+      token: executionToken,
+      requirement: paymentRequired,
+      fingerprint: requirementFingerprint
+    }
+
+    try {
+      ui.rejectButton.addEventListener('click', handleReject)
+      ui.approveButton.addEventListener('click', handleApprove)
+      signal?.addEventListener('abort', handleAbort, { once: true })
+    } catch (error) {
+      settle('reject', new Error(`Gate H3A approval setup failed: ${errorMessage(error)}`))
+      return
+    }
+
+    if (signal?.aborted) {
+      handleAbort()
+      return
+    }
+
+    addTraceEvent('Human approval required')
+  })
+}
+
+const executeGateH3A = async (_input, options = {}) => {
   addTraceEvent(`WebMCP tool invoked: ${TOOL_NAME}`)
 
+  if (pendingApproval !== null) {
+    const error = new Error('An approval decision is already pending.')
+    addTraceEvent(`Tool execution failed: ${error.message}`, 'error')
+    throw error
+  }
+
+  if (activeExecution !== null) {
+    const error = new Error('A Gate H3A tool invocation is already active.')
+    addTraceEvent(`Tool execution failed: ${error.message}`, 'error')
+    throw error
+  }
+
+  const executionToken = Symbol('gate-h3a-execution')
+  activeExecution = executionToken
+
   try {
+    resetApprovalSurface()
+    requireValidAbortSignal(options.signal)
+
     const fetchOptions = {
       cache: 'no-store',
       redirect: 'error'
@@ -147,36 +354,74 @@ const executeGateH2B = async (_input, options = {}) => {
 
     addTraceEvent('PAYMENT-REQUIRED header decoded & validated', 'success')
     addTraceEvent(`Price: ${acceptance.extra.displayAmount}`, 'success')
-    addTraceEvent('STOP - Awaiting wallet integration (Gate H3)')
+
+    const decision = await requestHumanApproval(
+      paymentRequired,
+      acceptance,
+      options.signal,
+      executionToken
+    )
+
+    if (decision === 'rejected') {
+      addTraceEvent('Human decision: REJECTED')
+      addTraceEvent('STOP - Payment not authorized')
+
+      return {
+        status: 'payment_rejected',
+        gate: 'H3A',
+        httpStatus: 402,
+        message: 'The human rejected the experimental 100 XEC payment request. No payment was performed.',
+        approval: {
+          required_amount: acceptance.extra.displayAmount,
+          approved: false
+        },
+        payment: {
+          performed: false
+        }
+      }
+    }
+
+    if (decision !== 'approved') {
+      throw new Error('Gate H3A produced an invalid approval decision')
+    }
+
+    addTraceEvent('Human decision: APPROVED')
+    addTraceEvent(`Approval recorded: ${acceptance.extra.displayAmount}`)
+    addTraceEvent('STOP - Awaiting Tonalli signing integration (Gate H3B)')
 
     return {
-      status: 'payment_required',
-      gate: 'H2B',
+      status: 'payment_approved',
+      gate: 'H3A',
       httpStatus: 402,
-      message: 'Resource requires payment. The browser intercepted and validated the live HTTP 402 Payment Required response. No payment was performed.',
-      payment: {
+      message: 'The human approved proceeding toward a 100 XEC payment. No signing or payment was performed.',
+      approval: {
         network: acceptance.network,
         asset: acceptance.asset,
         required_amount: acceptance.extra.displayAmount,
         atomic_amount: acceptance.amount,
         payTo: acceptance.payTo,
-        experimental: true,
+        approved: true
+      },
+      payment: {
         performed: false
-      }
+      },
+      nextGate: 'H3B'
     }
   } catch (error) {
     addTraceEvent(`Tool execution failed: ${errorMessage(error)}`, 'error')
     throw error
+  } finally {
+    if (activeExecution === executionToken) activeExecution = null
   }
 }
 
-const registerGateH2BTool = async () => {
+const registerGateH3ATool = async () => {
   try {
     if (!document.modelContext || typeof document.modelContext.registerTool !== 'function') {
       setCapabilityState(
         'unavailable',
         'WebMCP unavailable in this browser.',
-        'No tool was registered. Open this page in a WebMCP-aware browser to run Gate H2B.'
+        'No tool was registered. Open this page in a WebMCP-aware browser to run Gate H3A.'
       )
       addTraceEvent('WebMCP unavailable in this browser.', 'unavailable')
       return
@@ -193,13 +438,13 @@ const registerGateH2BTool = async () => {
       annotations: {
         readOnlyHint: true
       },
-      execute: executeGateH2B
+      execute: executeGateH3A
     })
 
     setCapabilityState(
       'ready',
       'WebMCP tool registered.',
-      'The read-only Gate H2B tool is ready to inspect the live experimental payment requirement.'
+      'Gate H3A is ready to validate the live requirement and request a human decision.'
     )
     addTraceEvent(`WebMCP tool registered: ${TOOL_NAME}`, 'success')
   } catch (error) {
@@ -212,4 +457,4 @@ const registerGateH2BTool = async () => {
   }
 }
 
-registerGateH2BTool()
+registerGateH3ATool()
