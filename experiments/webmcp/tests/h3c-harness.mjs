@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url'
 import {
   H3B_MAX_PROOF_BASE64URL_LENGTH,
   H3C_CALLBACK_ACK_TIMEOUT_MS,
+  H3C_HANDOFF_ANNOUNCEMENT_INTERVAL_MS,
   H3C_HANDOFF_PATH,
+  H3C_HANDOFF_TIMEOUT_MS,
   H3C_TTL_SECONDS,
   canonicalizeJson,
   createH3BRequest,
@@ -22,6 +24,7 @@ import {
   validatePaymentRequired
 } from '../h3c-contract.js'
 import { createH3CBridge } from '../h3c-bridge.js'
+import { runHandoff } from '../h3c-handoff.js'
 import { buildH3BAuthorizationMessage, verifySignedH3BProof } from '../h3c-verify.js'
 import { createResourceToolExecutor } from '../webmcp.js'
 
@@ -173,25 +176,125 @@ const waitFor = async (predicate, timeoutMilliseconds = 1_000) => {
 const createManualScheduler = () => {
   let nextId = 1
   const tasks = new Map()
+  const add = (callback, delay, repeat) => {
+    const id = nextId
+    nextId += 1
+    tasks.set(id, { callback, delay, repeat, cleared: false })
+    return id
+  }
   return {
     set (callback, delay) {
-      const id = nextId
-      nextId += 1
-      tasks.set(id, { callback, delay, cleared: false })
-      return id
+      return add(callback, delay, false)
+    },
+    setInterval (callback, delay) {
+      return add(callback, delay, true)
     },
     clear (id) {
       const task = tasks.get(id)
       if (task) task.cleared = true
     },
     runDelay (delay) {
-      for (const [id, task] of tasks) {
+      for (const [id, task] of [...tasks]) {
         if (task.cleared || task.delay !== delay) continue
-        task.cleared = true
+        if (!task.repeat) task.cleared = true
         tasks.set(id, task)
         task.callback()
       }
+    },
+    pending () {
+      return [...tasks.values()].filter((task) => !task.cleared).length
     }
+  }
+}
+
+const flushMicrotasks = async () => {
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
+const createHandoffChildHarness = ({
+  nowMilliseconds = () => NOW * 1_000,
+  onOpened = () => {}
+} = {}) => {
+  MockBroadcastChannel.reset()
+  const scheduler = createManualScheduler()
+  const created = createH3BRequest({
+    paymentRequired: PAYMENT_REQUIRED,
+    nowSeconds: NOW,
+    cryptoImplementation: deterministicCrypto
+  })
+  const status = { textContent: '' }
+  const detail = { textContent: '' }
+  const location = {
+    hash: `#request=${created.encodedRequest}`,
+    search: '',
+    pathname: H3C_HANDOFF_PATH,
+    replaced: [],
+    replace (url) {
+      this.replaced.push(url)
+    }
+  }
+  const history = {
+    state: null,
+    replaceState (_state, _title, path) {
+      assert.equal(path, H3C_HANDOFF_PATH)
+      location.hash = ''
+      location.search = ''
+    }
+  }
+  const document = {
+    body: { dataset: {} },
+    querySelector (selector) {
+      if (selector === '[data-handoff-status]') return status
+      if (selector === '[data-handoff-detail]') return detail
+      return null
+    }
+  }
+  const listeners = new Map()
+  const window = {
+    opener: {},
+    addEventListener (type, handler) {
+      listeners.set(type, handler)
+    },
+    removeEventListener (type, handler) {
+      if (listeners.get(type) === handler) listeners.delete(type)
+    }
+  }
+  const announcements = []
+  const scrubbedBeforeAnnouncements = []
+  const parent = new MockBroadcastChannel(h3cChannelName(created.request.challengeId))
+  parent.onmessage = (event) => {
+    if (event.data?.type !== 'h3c-handoff-opened') return
+    announcements.push(event.data)
+    scrubbedBeforeAnnouncements.push(location.hash === '' && location.search === '')
+    onOpened({ message: event.data, parent, announcements })
+  }
+  const controller = runHandoff({
+    documentImplementation: document,
+    historyImplementation: history,
+    locationImplementation: location,
+    windowImplementation: window,
+    BroadcastChannelImplementation: MockBroadcastChannel,
+    nowMilliseconds,
+    setTimeoutImplementation: scheduler.set,
+    clearTimeoutImplementation: scheduler.clear,
+    setIntervalImplementation: scheduler.setInterval,
+    clearIntervalImplementation: scheduler.clear
+  })
+
+  return {
+    announcements,
+    controller,
+    created,
+    detail,
+    dispatchPageHide: () => listeners.get('pagehide')?.(),
+    document,
+    location,
+    parent,
+    scheduler,
+    scrubbedBeforeAnnouncements,
+    status,
+    window
   }
 }
 
@@ -759,6 +862,470 @@ test('popup exception fails closed', async () => {
   await expectFailure(() => startApprovedHandoff(bridge), /could not open/u)
   assert.equal(bridge.getSnapshot().state, 'failed')
   bridge.dispose()
+})
+
+test('H3C-R2 A: child announces immediately after fragment cleanup and existing success is unchanged', async () => {
+  assert.equal(H3C_HANDOFF_TIMEOUT_MS, 15_000)
+  assert.equal(H3C_HANDOFF_ANNOUNCEMENT_INTERVAL_MS, 400)
+  assert.equal(H3C_TTL_SECONDS, 240)
+  const child = createHandoffChildHarness({
+    onOpened: ({ message, parent }) => parent.postMessage({
+      type: 'h3c-handoff-accepted',
+      challengeId: message.challengeId
+    })
+  })
+  await flushMicrotasks()
+  assert.deepEqual(child.announcements, [{
+    type: 'h3c-handoff-opened',
+    challengeId: child.created.request.challengeId
+  }])
+  assert.deepEqual(child.scrubbedBeforeAnnouncements, [true])
+  assert.deepEqual(child.location.replaced, [tonalliH3BUrl(child.created.encodedRequest)])
+  assert.equal(child.window.opener, null)
+  assert.equal(child.document.body.dataset.handoffState, 'opening')
+  assert.equal(child.scheduler.pending(), 0)
+  child.parent.close()
+})
+
+test('H3C-R2 B: child startup after eight seconds succeeds inside the new handshake window', async () => {
+  MockBroadcastChannel.reset()
+  const scheduler = createManualScheduler()
+  let child = null
+  let openCount = 0
+  const bridge = createH3CBridge({
+    BroadcastChannelImplementation: MockBroadcastChannel,
+    openWindow: (url) => {
+      openCount += 1
+      const request = parseH3BRequestTransport({
+        hash: new URL(url, 'https://x402.ecash.mx').hash,
+        search: '',
+        nowSeconds: NOW
+      }).request
+      scheduler.set(() => {
+        child = new MockBroadcastChannel(h3cChannelName(request.challengeId))
+        child.postMessage({ type: 'h3c-handoff-opened', challengeId: request.challengeId })
+      }, 8_000)
+      return null
+    },
+    cryptoImplementation: deterministicCrypto,
+    nowSeconds: () => NOW,
+    setTimeoutImplementation: scheduler.set,
+    clearTimeoutImplementation: scheduler.clear
+  })
+  const handoff = startApprovedHandoff(bridge)
+  assert.equal(bridge.getSnapshot().state, 'handoff-opening')
+  assert.equal(child, null)
+  scheduler.runDelay(8_000)
+  const result = await handoff
+  assert.equal(result.status, 'authorization_pending')
+  assert.equal(bridge.getSnapshot().state, 'awaiting-tonalli')
+  assert.equal(bridge.getSnapshot().expiresAt - bridge.getSnapshot().issuedAt, 240)
+  assert.equal(openCount, 1)
+  child.close()
+  bridge.dispose()
+})
+
+test('H3C-R2 C: repeated valid child announcements settle the parent exactly once', async () => {
+  MockBroadcastChannel.reset()
+  let child
+  let randomCalls = 0
+  let openCount = 0
+  const acceptedMessages = []
+  const cryptoImplementation = {
+    subtle: deterministicCrypto.subtle,
+    getRandomValues (bytes) {
+      randomCalls += 1
+      return deterministicCrypto.getRandomValues(bytes)
+    }
+  }
+  const bridge = createH3CBridge({
+    BroadcastChannelImplementation: MockBroadcastChannel,
+    openWindow: (url) => {
+      openCount += 1
+      const request = parseH3BRequestTransport({
+        hash: new URL(url, 'https://x402.ecash.mx').hash,
+        search: '',
+        nowSeconds: NOW
+      }).request
+      child = new MockBroadcastChannel(h3cChannelName(request.challengeId))
+      child.onmessage = (event) => {
+        if (event.data.type === 'h3c-handoff-accepted') acceptedMessages.push(event.data)
+      }
+      queueMicrotask(() => {
+        for (let count = 0; count < 4; count += 1) {
+          child.postMessage({ type: 'h3c-handoff-opened', challengeId: request.challengeId })
+        }
+      })
+      return null
+    },
+    cryptoImplementation,
+    nowSeconds: () => NOW,
+    handoffTimeoutMs: H3C_HANDOFF_TIMEOUT_MS
+  })
+  await startApprovedHandoff(bridge)
+  await flushMicrotasks()
+  const snapshot = bridge.getSnapshot()
+  assert.equal(acceptedMessages.length, 1)
+  assert.equal(randomCalls, 1)
+  assert.equal(openCount, 1)
+  assert.equal(snapshot.challengeId, CHALLENGE)
+  assert.equal(snapshot.expiresAt, NOW + H3C_TTL_SECONDS)
+  child.close()
+  bridge.dispose()
+})
+
+test('H3C-R2 D: child repeats until acceptance and navigates exactly once', async () => {
+  const child = createHandoffChildHarness({
+    onOpened: ({ message, parent, announcements }) => {
+      if (announcements.length === 3) {
+        parent.postMessage({
+          type: 'h3c-handoff-accepted',
+          challengeId: message.challengeId
+        })
+      }
+    }
+  })
+  await flushMicrotasks()
+  assert.equal(child.announcements.length, 1)
+  child.scheduler.runDelay(H3C_HANDOFF_ANNOUNCEMENT_INTERVAL_MS)
+  await flushMicrotasks()
+  child.scheduler.runDelay(H3C_HANDOFF_ANNOUNCEMENT_INTERVAL_MS)
+  await flushMicrotasks()
+  assert.equal(child.announcements.length, 3)
+  assert.ok(child.announcements.every((message) => (
+    message.type === 'h3c-handoff-opened' &&
+    message.challengeId === child.created.request.challengeId
+  )))
+  assert.deepEqual(child.location.replaced, [tonalliH3BUrl(child.created.encodedRequest)])
+  assert.equal(child.scheduler.pending(), 0)
+  child.scheduler.runDelay(H3C_HANDOFF_ANNOUNCEMENT_INTERVAL_MS)
+  child.parent.postMessage({
+    type: 'h3c-handoff-accepted',
+    challengeId: child.created.request.challengeId
+  })
+  await flushMicrotasks()
+  assert.equal(child.announcements.length, 3)
+  assert.equal(child.location.replaced.length, 1)
+  child.parent.close()
+})
+
+test('H3C-R2 E: no child acknowledgement for the full new timeout fails closed', async () => {
+  MockBroadcastChannel.reset()
+  const scheduler = createManualScheduler()
+  const bridge = createH3CBridge({
+    BroadcastChannelImplementation: MockBroadcastChannel,
+    openWindow: () => ({}),
+    cryptoImplementation: deterministicCrypto,
+    nowSeconds: () => NOW,
+    setTimeoutImplementation: scheduler.set,
+    clearTimeoutImplementation: scheduler.clear
+  })
+  const handoff = startApprovedHandoff(bridge)
+  const failure = assert.rejects(handoff, /did not acknowledge/u)
+  scheduler.runDelay(H3C_HANDOFF_TIMEOUT_MS - 1)
+  assert.equal(bridge.getSnapshot().state, 'handoff-opening')
+  scheduler.runDelay(H3C_HANDOFF_TIMEOUT_MS)
+  await failure
+  assert.equal(bridge.getSnapshot().state, 'failed')
+  bridge.dispose()
+
+  const child = createHandoffChildHarness()
+  await flushMicrotasks()
+  child.scheduler.runDelay(H3C_HANDOFF_ANNOUNCEMENT_INTERVAL_MS)
+  await flushMicrotasks()
+  assert.equal(child.announcements.length, 2)
+  child.scheduler.runDelay(H3C_HANDOFF_TIMEOUT_MS)
+  assert.equal(child.document.body.dataset.handoffState, 'failed')
+  assert.equal(child.location.replaced.length, 0)
+  assert.equal(child.scheduler.pending(), 0)
+  child.parent.close()
+})
+
+test('H3C-R2 F: wrong-challenge announcements are ignored', async () => {
+  MockBroadcastChannel.reset()
+  let child
+  const acceptedMessages = []
+  const bridge = createH3CBridge({
+    BroadcastChannelImplementation: MockBroadcastChannel,
+    openWindow: (url) => {
+      const request = parseH3BRequestTransport({
+        hash: new URL(url, 'https://x402.ecash.mx').hash,
+        search: '',
+        nowSeconds: NOW
+      }).request
+      child = new MockBroadcastChannel(h3cChannelName(request.challengeId))
+      child.onmessage = (event) => acceptedMessages.push(event.data)
+      return null
+    },
+    cryptoImplementation: deterministicCrypto,
+    nowSeconds: () => NOW,
+    handoffTimeoutMs: H3C_HANDOFF_TIMEOUT_MS
+  })
+  const handoff = startApprovedHandoff(bridge)
+  child.postMessage({ type: 'h3c-handoff-opened', challengeId: `B${CHALLENGE.slice(1)}` })
+  await flushMicrotasks()
+  assert.equal(bridge.getSnapshot().state, 'handoff-opening')
+  assert.equal(acceptedMessages.length, 0)
+  child.postMessage({ type: 'h3c-handoff-opened', challengeId: CHALLENGE })
+  await handoff
+  await flushMicrotasks()
+  assert.equal(acceptedMessages.filter((message) => message.type === 'h3c-handoff-accepted').length, 1)
+  child.close()
+  bridge.dispose()
+})
+
+test('H3C-R2 G: duplicate announcements after success cannot reopen or mutate the rendezvous', async () => {
+  MockBroadcastChannel.reset()
+  let child
+  let openCount = 0
+  const acceptedMessages = []
+  const bridge = createH3CBridge({
+    BroadcastChannelImplementation: MockBroadcastChannel,
+    openWindow: (url) => {
+      openCount += 1
+      const request = parseH3BRequestTransport({
+        hash: new URL(url, 'https://x402.ecash.mx').hash,
+        search: '',
+        nowSeconds: NOW
+      }).request
+      child = new MockBroadcastChannel(h3cChannelName(request.challengeId))
+      child.onmessage = (event) => acceptedMessages.push(event.data)
+      queueMicrotask(() => child.postMessage({
+        type: 'h3c-handoff-opened',
+        challengeId: request.challengeId
+      }))
+      return null
+    },
+    cryptoImplementation: deterministicCrypto,
+    nowSeconds: () => NOW,
+    handoffTimeoutMs: H3C_HANDOFF_TIMEOUT_MS
+  })
+  await startApprovedHandoff(bridge)
+  await flushMicrotasks()
+  const before = bridge.getSnapshot()
+  for (let count = 0; count < 3; count += 1) {
+    child.postMessage({ type: 'h3c-handoff-opened', challengeId: CHALLENGE })
+  }
+  await flushMicrotasks()
+  assert.deepEqual(bridge.getSnapshot(), before)
+  assert.equal(openCount, 1)
+  assert.equal(acceptedMessages.filter((message) => message.type === 'h3c-handoff-accepted').length, 1)
+  child.close()
+  bridge.dispose()
+})
+
+test('H3C-R2 H: acknowledgement after parent failure is ignored', async () => {
+  MockBroadcastChannel.reset()
+  const scheduler = createManualScheduler()
+  let child
+  const acceptedMessages = []
+  const bridge = createH3CBridge({
+    BroadcastChannelImplementation: MockBroadcastChannel,
+    openWindow: (url) => {
+      const request = parseH3BRequestTransport({
+        hash: new URL(url, 'https://x402.ecash.mx').hash,
+        search: '',
+        nowSeconds: NOW
+      }).request
+      child = new MockBroadcastChannel(h3cChannelName(request.challengeId))
+      child.onmessage = (event) => acceptedMessages.push(event.data)
+      return null
+    },
+    cryptoImplementation: deterministicCrypto,
+    nowSeconds: () => NOW,
+    setTimeoutImplementation: scheduler.set,
+    clearTimeoutImplementation: scheduler.clear
+  })
+  const handoff = startApprovedHandoff(bridge)
+  const failure = assert.rejects(handoff, /did not acknowledge/u)
+  scheduler.runDelay(H3C_HANDOFF_TIMEOUT_MS)
+  await failure
+  const failed = bridge.getSnapshot()
+  child.postMessage({ type: 'h3c-handoff-opened', challengeId: CHALLENGE })
+  await flushMicrotasks()
+  assert.deepEqual(bridge.getSnapshot(), failed)
+  assert.equal(acceptedMessages.length, 0)
+  child.close()
+  bridge.dispose()
+})
+
+test('H3C-R2 I: authorization expiry wins before handshake success and prevents child navigation', async () => {
+  MockBroadcastChannel.reset()
+  const scheduler = createManualScheduler()
+  let now = NOW
+  let child
+  const acceptedMessages = []
+  const bridge = createH3CBridge({
+    BroadcastChannelImplementation: MockBroadcastChannel,
+    openWindow: (url) => {
+      const request = parseH3BRequestTransport({
+        hash: new URL(url, 'https://x402.ecash.mx').hash,
+        search: '',
+        nowSeconds: NOW
+      }).request
+      child = new MockBroadcastChannel(h3cChannelName(request.challengeId))
+      child.onmessage = (event) => acceptedMessages.push(event.data)
+      return null
+    },
+    cryptoImplementation: deterministicCrypto,
+    nowSeconds: () => now,
+    setTimeoutImplementation: scheduler.set,
+    clearTimeoutImplementation: scheduler.clear
+  })
+  const handoff = startApprovedHandoff(bridge)
+  const failure = assert.rejects(handoff, /expired before handoff acknowledgement/u)
+  now = NOW + H3C_TTL_SECONDS
+  scheduler.runDelay(H3C_HANDOFF_TIMEOUT_MS)
+  await failure
+  assert.equal(bridge.getSnapshot().state, 'expired')
+  child.postMessage({ type: 'h3c-handoff-opened', challengeId: CHALLENGE })
+  await flushMicrotasks()
+  assert.equal(acceptedMessages.length, 0)
+  child.close()
+  bridge.dispose()
+
+  let childNow = NOW * 1_000
+  const expiredChild = createHandoffChildHarness({ nowMilliseconds: () => childNow })
+  await flushMicrotasks()
+  childNow = (NOW + H3C_TTL_SECONDS) * 1_000
+  expiredChild.parent.postMessage({
+    type: 'h3c-handoff-accepted',
+    challengeId: expiredChild.created.request.challengeId
+  })
+  await flushMicrotasks()
+  assert.equal(expiredChild.location.replaced.length, 0)
+  assert.equal(expiredChild.document.body.dataset.handoffState, 'failed')
+  expiredChild.parent.close()
+})
+
+test('H3C-R2 J: null window handle plus a valid child acknowledgement succeeds', async () => {
+  const { bridge, openedUrls } = createAutoBridge({ handoffTimeoutMs: H3C_HANDOFF_TIMEOUT_MS })
+  const result = await startApprovedHandoff(bridge)
+  assert.equal(result.status, 'authorization_pending')
+  assert.equal(bridge.getSnapshot().state, 'awaiting-tonalli')
+  assert.equal(openedUrls.length, 1)
+  bridge.dispose()
+})
+
+test('H3C-R2 K: null window handle without a child acknowledgement fails closed', async () => {
+  MockBroadcastChannel.reset()
+  const scheduler = createManualScheduler()
+  const bridge = createH3CBridge({
+    BroadcastChannelImplementation: MockBroadcastChannel,
+    openWindow: () => null,
+    cryptoImplementation: deterministicCrypto,
+    nowSeconds: () => NOW,
+    setTimeoutImplementation: scheduler.set,
+    clearTimeoutImplementation: scheduler.clear,
+    handoffTimeoutMs: 5
+  })
+  const handoff = startApprovedHandoff(bridge)
+  const failure = assert.rejects(handoff, /did not acknowledge/u)
+  scheduler.runDelay(5)
+  await failure
+  assert.equal(bridge.getSnapshot().state, 'failed')
+  bridge.dispose()
+})
+
+test('H3C-R2 L: a throwing window.open fails closed immediately', async () => {
+  MockBroadcastChannel.reset()
+  const scheduler = createManualScheduler()
+  let openAttempts = 0
+  const bridge = createH3CBridge({
+    BroadcastChannelImplementation: MockBroadcastChannel,
+    openWindow: () => {
+      openAttempts += 1
+      throw new Error('blocked')
+    },
+    cryptoImplementation: deterministicCrypto,
+    nowSeconds: () => NOW,
+    setTimeoutImplementation: scheduler.set,
+    clearTimeoutImplementation: scheduler.clear
+  })
+  await expectFailure(() => startApprovedHandoff(bridge), /could not open/u)
+  assert.equal(bridge.getSnapshot().state, 'failed')
+  assert.equal(openAttempts, 1)
+  assert.equal(scheduler.pending(), 0)
+  bridge.dispose()
+})
+
+test('H3C-R2 child ignores wrong acceptance and pagehide stops every announcement', async () => {
+  const child = createHandoffChildHarness()
+  await flushMicrotasks()
+  child.parent.postMessage({
+    type: 'h3c-handoff-accepted',
+    challengeId: child.created.request.challengeId,
+    unexpected: true
+  })
+  await flushMicrotasks()
+  assert.equal(child.location.replaced.length, 0)
+  child.parent.postMessage({
+    type: 'h3c-handoff-accepted',
+    challengeId: `B${child.created.request.challengeId.slice(1)}`
+  })
+  await flushMicrotasks()
+  assert.equal(child.location.replaced.length, 0)
+  child.scheduler.runDelay(H3C_HANDOFF_ANNOUNCEMENT_INTERVAL_MS)
+  await flushMicrotasks()
+  assert.equal(child.announcements.length, 2)
+  child.dispatchPageHide()
+  assert.equal(child.scheduler.pending(), 0)
+  child.scheduler.runDelay(H3C_HANDOFF_ANNOUNCEMENT_INTERVAL_MS)
+  await flushMicrotasks()
+  assert.equal(child.announcements.length, 2)
+  assert.equal(child.location.replaced.length, 0)
+  child.parent.close()
+})
+
+test('H3C-R2 M: repeated handoff announcements perform no additional protected-resource fetch', async () => {
+  const { bridge, execute, fetches, rendered } = createResourceHarness()
+  await execute({})
+  await bridge.startHandoff(rendered[0].binding)
+  bridge.readResult()
+  assert.equal(fetches.length, 1)
+  const source = await readFile(`${WEBMCP_ROOT}webmcp.js`, 'utf8')
+  const executor = source.slice(
+    source.indexOf('export const createResourceToolExecutor'),
+    source.indexOf('const executeResourceTool =')
+  )
+  assert.equal((executor.match(/fetchImplementation\s*\(/gu) ?? []).length, 1)
+  bridge.dispose()
+})
+
+test('H3C-R2 N: robust handoff retains zero persistent browser storage', async () => {
+  const files = ['h3c-contract.js', 'h3c-bridge.js', 'h3c-handoff.js', 'webmcp.js']
+  const source = (await Promise.all(files.map((file) => readFile(`${WEBMCP_ROOT}${file}`, 'utf8')))).join('\n')
+  for (const forbidden of ['localStorage', 'sessionStorage', 'indexedDB', 'document.cookie']) {
+    assert.equal(source.includes(forbidden), false, forbidden)
+  }
+})
+
+test('H3C-R2 O: robust handoff constructs no PAYMENT-SIGNATURE', async () => {
+  const files = ['h3c-contract.js', 'h3c-bridge.js', 'h3c-handoff.js', 'webmcp.js']
+  const source = (await Promise.all(files.map((file) => readFile(`${WEBMCP_ROOT}${file}`, 'utf8')))).join('\n')
+  assert.equal(/["']PAYMENT-SIGNATURE["']\s*:/u.test(source), false)
+  assert.equal(/\.set\(\s*["']PAYMENT-SIGNATURE["']/u.test(source), false)
+  assert.equal(/setRequestHeader\(\s*["']PAYMENT-SIGNATURE["']/u.test(source), false)
+})
+
+test('H3C-R2 P: robust handoff contains no transaction or UTXO builder', async () => {
+  const files = ['h3c-contract.js', 'h3c-bridge.js', 'h3c-handoff.js', 'h3c-verify.js', 'webmcp.js']
+  const source = (await Promise.all(files.map((file) => readFile(`${WEBMCP_ROOT}${file}`, 'utf8')))).join('\n')
+  for (const forbidden of [
+    'TxBuilder', 'TransactionBuilder', 'buildTransaction', 'createTransaction',
+    'signTransaction', 'selectUtxo', 'selectUtxos'
+  ]) {
+    assert.equal(source.includes(forbidden), false, forbidden)
+  }
+})
+
+test('H3C-R2 Q: robust handoff contains no Chronik or blockchain broadcast', async () => {
+  const files = ['h3c-contract.js', 'h3c-bridge.js', 'h3c-handoff.js', 'h3c-verify.js', 'webmcp.js']
+  const source = (await Promise.all(files.map((file) => readFile(`${WEBMCP_ROOT}${file}`, 'utf8')))).join('\n')
+  assert.equal(/chronik/iu.test(source), false)
+  for (const forbidden of [/broadcastTx\s*\(/u, /sendRawTransaction\s*\(/u, /submitTx\s*\(/u]) {
+    assert.equal(forbidden.test(source), false, forbidden.source)
+  }
 })
 
 test('BroadcastChannel support is mandatory', async () => {
@@ -1520,7 +2087,7 @@ test('same-origin handoff requires parent acceptance before Tonalli navigation',
   const handoff = await readFile(`${WEBMCP_ROOT}h3c-handoff.js`, 'utf8')
   const bridge = await readFile(`${WEBMCP_ROOT}h3c-bridge.js`, 'utf8')
   assert.ok(handoff.includes("message.type === 'h3c-handoff-accepted'"))
-  assert.ok(handoff.indexOf('isAcceptedHandoff') < handoff.indexOf('location.replace'))
+  assert.ok(handoff.indexOf('isAcceptedHandoff') < handoff.indexOf('locationImplementation.replace'))
   assert.ok(handoff.includes('No active x402eCash H3C session accepted this handoff'))
   assert.ok(bridge.includes("type: 'h3c-handoff-accepted'"))
 })

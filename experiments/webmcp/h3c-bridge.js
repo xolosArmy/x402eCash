@@ -208,6 +208,16 @@ export const createH3CBridge = ({
   }
 
   const acknowledgeHandoff = (current) => {
+    if (
+      rendezvous !== current ||
+      current.state !== 'handoff-opening'
+    ) {
+      throw new Error('H3C handoff is no longer current')
+    }
+    if (nowSeconds() >= current.expiresAt) {
+      expireCurrent(current)
+      throw new Error('H3C authorization request expired before handoff acknowledgement')
+    }
     if (!current.channel) throw new Error('H3C handoff channel is unavailable')
     try {
       current.channel.postMessage({
@@ -221,6 +231,7 @@ export const createH3CBridge = ({
 
   const expireCurrent = (current, acknowledge = false) => {
     if (rendezvous !== current || !RENDEZVOUS_LIVE_STATES.has(current.state)) return
+    const rejectPendingHandshake = current.handshakeReject
     current.callbackConsumed = true
     current.state = 'expired'
     current.error = 'H3C authorization request expired'
@@ -233,6 +244,9 @@ export const createH3CBridge = ({
       closeChannel(current)
     }
     notifyState()
+    rejectPendingHandshake?.(
+      new Error('H3C authorization request expired before handoff acknowledgement')
+    )
   }
 
   const finalizeRejected = (current) => {
@@ -340,6 +354,10 @@ export const createH3CBridge = ({
       message.type === 'h3c-handoff-opened' &&
       message.challengeId === current.challengeId
     ) {
+      if (nowSeconds() >= current.expiresAt) {
+        expireCurrent(current)
+        return
+      }
       current.handshakeResolve?.()
       return
     }
@@ -393,6 +411,7 @@ export const createH3CBridge = ({
       channel: null,
       expiryTimer: null,
       handshakeResolve: null,
+      handshakeReject: null,
       result: null,
       error: null
     }
@@ -473,6 +492,7 @@ export const createH3CBridge = ({
       current.channel = channel
       current.expiryTimer = null
       current.handshakeResolve = null
+      current.handshakeReject = null
       current.result = null
       current.error = null
       transition(current, 'handoff-opening')
@@ -483,12 +503,17 @@ export const createH3CBridge = ({
       const handoffAcknowledgement = new Promise((resolve, reject) => {
         let settled = false
         const timeout = setTimeoutImplementation(() => {
+          if (nowSeconds() >= current.expiresAt) {
+            expireCurrent(current)
+            return
+          }
           settle(reject, new Error('Tonalli authorization handoff did not acknowledge opening.'))
         }, handoffTimeoutMs)
 
         const cleanup = () => {
           clearTimeoutImplementation(timeout)
           current.handshakeResolve = null
+          current.handshakeReject = null
         }
         const settle = (handler, value) => {
           if (settled) return
@@ -500,6 +525,9 @@ export const createH3CBridge = ({
         current.handshakeResolve = () => {
           if (settled || rendezvous !== current || current.state !== 'handoff-opening') return
           settle(resolve)
+        }
+        current.handshakeReject = (error) => {
+          settle(reject, error)
         }
         try {
           openWindow(`${handoffPath}#request=${created.encodedRequest}`)
@@ -525,8 +553,8 @@ export const createH3CBridge = ({
       if (rendezvous !== current || current.state !== 'handoff-opening') {
         throw new Error('H3C rendezvous changed while binding the payment requirement')
       }
-      transition(current, 'awaiting-tonalli')
       acknowledgeHandoff(current)
+      transition(current, 'awaiting-tonalli')
 
       addTraceEvent('Tonalli authorization handoff opened', 'success')
       addTraceEvent('STOP - Awaiting Tonalli authorization proof')
