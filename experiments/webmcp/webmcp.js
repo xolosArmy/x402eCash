@@ -1,8 +1,21 @@
-const TOOL_NAME = 'get_paid_xec_resource'
-const TOOL_DESCRIPTION = 'Request the live x402eCash demo resource, validate its experimental XEC payment requirement, and ask the human to approve or reject proceeding. No signing or payment is performed in Gate H3A.'
-const LIVE_RESOURCE_URL = 'https://api.x402.ecash.mx/v1/resource/demo'
-const EXPECTED_PAYMENT_ERROR = 'PAYMENT-SIGNATURE header is required'
-const EXPECTED_PAY_TO = 'ecash:qqg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyquz9y96w'
+import {
+  H3C_CALLBACK_ACK_TIMEOUT_MS,
+  LIVE_RESOURCE_URL,
+  canonicalizeJson,
+  decodePaymentRequiredHeader,
+  h3cChannelName,
+  isRecord,
+  parseH3BCallback,
+  recoverH3BCallbackChallenge,
+  requireExactKeys,
+  validatePaymentRequired
+} from './h3c-contract.js'
+import { createH3CBridge } from './h3c-bridge.js'
+
+const RESOURCE_TOOL_NAME = 'get_paid_xec_resource'
+const RESULT_TOOL_NAME = 'get_x402_authorization_result'
+const RESOURCE_TOOL_DESCRIPTION = 'Validate the live experimental 100 XEC HTTP 402 requirement, ask for human approval, and initiate the Tonalli H3B authorization-only handoff. No payment is performed.'
+const RESULT_TOOL_DESCRIPTION = 'Read the current ephemeral Gate H3C authorization state. This tool never initiates signing or payment.'
 
 const traceLog = document.querySelector('[data-trace-log]')
 const capabilityState = document.querySelector('[data-webmcp-state]')
@@ -11,6 +24,14 @@ const capabilityDetail = document.querySelector('[data-webmcp-detail]')
 const approvalRegion = document.querySelector('[data-approval-region]')
 const approvalMount = document.querySelector('[data-approval-mount]')
 const approvalTemplate = document.querySelector('[data-approval-template]')
+const rendezvousRegion = document.querySelector('[data-rendezvous-region]')
+const rendezvousState = document.querySelector('[data-rendezvous-state]')
+const rendezvousChallenge = document.querySelector('[data-rendezvous-challenge]')
+const rendezvousExpiry = document.querySelector('[data-rendezvous-expiry]')
+const callbackRegion = document.querySelector('[data-callback-region]')
+const callbackTitle = document.querySelector('[data-callback-title]')
+const callbackDetail = document.querySelector('[data-callback-detail]')
+const callbackClose = document.querySelector('[data-callback-close]')
 
 let activeExecution = null
 let pendingApproval = null
@@ -24,7 +45,6 @@ const localTimestamp = () => {
 
 const addTraceEvent = (message, kind = 'info') => {
   if (!traceLog) return
-
   traceLog.querySelector('[data-trace-placeholder]')?.remove()
   const item = document.createElement('li')
   item.dataset.kind = kind
@@ -39,92 +59,33 @@ const setCapabilityState = (state, status, detail) => {
 }
 
 const errorMessage = (error) => {
-  if (
-    error !== null &&
-    typeof error === 'object' &&
-    typeof error.message === 'string' &&
-    error.message
-  ) return error.message
+  if (error instanceof Error && error.message) return error.message
   if (typeof error === 'string' && error) return error
   return 'Unknown error'
 }
 
-const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
-
-const requireInvariant = (condition, message) => {
-  if (!condition) throw new Error(`PAYMENT-REQUIRED validation failed: ${message}`)
+const requireEmptyInput = (input) => {
+  if (input === undefined) return
+  if (!isRecord(input) || Object.keys(input).length !== 0) {
+    throw new Error('This WebMCP tool accepts only an empty object.')
+  }
 }
 
-const decodePaymentRequired = (encodedHeader) => {
+const requireValidAbortSignal = (signal) => {
+  if (signal === undefined || signal === null) return
   if (
-    typeof encodedHeader !== 'string' ||
-    encodedHeader.length === 0 ||
-    encodedHeader.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encodedHeader)
+    typeof signal.aborted !== 'boolean' ||
+    typeof signal.addEventListener !== 'function' ||
+    typeof signal.removeEventListener !== 'function'
   ) {
-    throw new Error('PAYMENT-REQUIRED header is not valid Base64')
-  }
-
-  let binary
-  try {
-    binary = atob(encodedHeader)
-  } catch {
-    throw new Error('PAYMENT-REQUIRED header is not valid Base64')
-  }
-
-  if (btoa(binary) !== encodedHeader) {
-    throw new Error('PAYMENT-REQUIRED header is not canonical Base64')
-  }
-
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
-  let decoded
-  try {
-    decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-  } catch {
-    throw new Error('PAYMENT-REQUIRED header is not valid UTF-8')
-  }
-
-  try {
-    return JSON.parse(decoded)
-  } catch {
-    throw new Error('PAYMENT-REQUIRED header does not contain valid JSON')
+    throw new Error('Gate H3C received an invalid AbortSignal')
   }
 }
 
-const validatePaymentRequired = (paymentRequired) => {
-  requireInvariant(isObject(paymentRequired), 'decoded value must be an object')
-  requireInvariant(paymentRequired.x402Version === 2, 'x402Version must equal 2')
-  requireInvariant(paymentRequired.error === EXPECTED_PAYMENT_ERROR, 'error message does not match Gate H2A')
-
-  const resource = paymentRequired.resource
-  requireInvariant(isObject(resource), 'resource must be an object')
-  requireInvariant(resource.url === LIVE_RESOURCE_URL, 'resource.url does not match the canonical resource')
-  requireInvariant(resource.description === 'x402eCash WebMCP Challenge demo resource', 'resource.description does not match')
-  requireInvariant(resource.mimeType === 'application/json', 'resource.mimeType must be application/json')
-  requireInvariant(resource.serviceName === 'x402eCash', 'resource.serviceName must be x402eCash')
-
-  requireInvariant(Array.isArray(paymentRequired.accepts), 'accepts must be an array')
-  requireInvariant(paymentRequired.accepts.length === 1, 'accepts must contain exactly one entry')
-
-  const acceptance = paymentRequired.accepts[0]
-  requireInvariant(isObject(acceptance), 'accepts[0] must be an object')
-  requireInvariant(acceptance.scheme === 'xec-prepaid-utxo', 'scheme must be xec-prepaid-utxo')
-  requireInvariant(acceptance.network === 'xec:mainnet', 'network must be xec:mainnet')
-  requireInvariant(acceptance.amount === '10000', 'amount must equal 10000')
-  requireInvariant(acceptance.asset === 'XEC', 'asset must be XEC')
-  requireInvariant(acceptance.payTo === EXPECTED_PAY_TO, 'payTo does not match the deterministic fixture')
-  requireInvariant(acceptance.maxTimeoutSeconds === 60, 'maxTimeoutSeconds must equal 60')
-
-  const extra = acceptance.extra
-  requireInvariant(isObject(extra), 'accepts[0].extra must be an object')
-  requireInvariant(extra.displayAmount === '100 XEC', 'displayAmount must equal 100 XEC')
-  requireInvariant(extra.experimental === true, 'experimental must equal true')
-  requireInvariant(extra.gate === 'H2A', 'gate must equal H2A')
-
-  requireInvariant(isObject(paymentRequired.extensions), 'extensions must be an object')
-  requireInvariant(Object.keys(paymentRequired.extensions).length === 0, 'extensions must contain no enumerable keys')
-
-  return acceptance
+const createAbortError = () => {
+  const error = new Error('Human approval cancelled because the tool execution was aborted')
+  error.name = 'AbortError'
+  return error
 }
 
 const requireApprovalSurface = () => {
@@ -132,8 +93,7 @@ const requireApprovalSurface = () => {
     !approvalRegion ||
     !approvalMount ||
     typeof approvalMount.replaceChildren !== 'function' ||
-    !approvalTemplate ||
-    !approvalTemplate.content ||
+    !approvalTemplate?.content ||
     typeof approvalTemplate.content.cloneNode !== 'function'
   ) {
     throw new Error('Gate H3A approval UI is unavailable')
@@ -146,26 +106,8 @@ const resetApprovalSurface = () => {
   approvalMount.replaceChildren()
 }
 
-const requireValidAbortSignal = (signal) => {
-  if (signal === undefined || signal === null) return
-  if (
-    typeof signal.aborted !== 'boolean' ||
-    typeof signal.addEventListener !== 'function' ||
-    typeof signal.removeEventListener !== 'function'
-  ) {
-    throw new Error('Gate H3A received an invalid AbortSignal')
-  }
-}
-
-const createAbortError = () => {
-  const error = new Error('Human approval cancelled because the tool execution was aborted')
-  error.name = 'AbortError'
-  return error
-}
-
 const createApprovalCard = (acceptance) => {
   requireApprovalSurface()
-
   const fragment = approvalTemplate.content.cloneNode(true)
   const card = fragment.querySelector('[data-approval-card]')
   const amount = fragment.querySelector('[data-approval-amount]')
@@ -202,22 +144,18 @@ const createApprovalCard = (acceptance) => {
   destination.textContent = acceptance.payTo
   experimental.textContent = acceptance.extra.experimental ? 'Yes' : 'No'
   approveButton.textContent = `Approve ${acceptance.extra.displayAmount}`
-
-  return {
-    fragment,
-    card,
-    rejectButton,
-    approveButton,
-    status
-  }
+  return { fragment, card, rejectButton, approveButton, status }
 }
 
-const requestHumanApproval = (paymentRequired, acceptance, signal, executionToken) => {
-  if (pendingApproval !== null) {
-    throw new Error('An approval decision is already pending.')
-  }
-
-  const requirementFingerprint = JSON.stringify(paymentRequired)
+const requestHumanApproval = (
+  paymentRequired,
+  acceptance,
+  signal,
+  executionToken,
+  beginApprovedHandoff
+) => {
+  if (pendingApproval !== null) throw new Error('An approval decision is already pending.')
+  const requirementFingerprint = canonicalizeJson(paymentRequired)
   const ui = createApprovalCard(acceptance)
 
   approvalMount.replaceChildren(ui.fragment)
@@ -240,16 +178,14 @@ const requestHumanApproval = (paymentRequired, acceptance, signal, executionToke
       if (settled) return
       settled = true
       cleanup()
-
       if (outcome === 'resolve') {
         ui.card.dataset.approvalState = value
         ui.status.textContent = value === 'approved'
-          ? 'Approval recorded. No signing or payment was performed.'
+          ? 'Approval recorded. Opening the authorization-only Tonalli handoff; no payment is being sent.'
           : 'Request rejected. No payment was authorized.'
         resolve(value)
         return
       }
-
       ui.card.dataset.approvalState = 'cancelled'
       ui.status.textContent = errorMessage(value)
       approvalRegion.hidden = true
@@ -262,7 +198,7 @@ const requestHumanApproval = (paymentRequired, acceptance, signal, executionToke
         pendingApproval?.token !== executionToken ||
         pendingApproval.requirement !== paymentRequired ||
         pendingApproval.fingerprint !== requirementFingerprint ||
-        JSON.stringify(paymentRequired) !== requirementFingerprint
+        canonicalizeJson(paymentRequired) !== requirementFingerprint
       ) {
         settle('reject', new Error('Gate H3A approval state no longer matches the validated payment requirement'))
         return false
@@ -277,6 +213,12 @@ const requestHumanApproval = (paymentRequired, acceptance, signal, executionToke
 
     function handleApprove () {
       if (settled || !validateCurrentRequest()) return
+      try {
+        beginApprovedHandoff()
+      } catch (error) {
+        settle('reject', error)
+        return
+      }
       settle('resolve', 'approved')
     }
 
@@ -305,67 +247,79 @@ const requestHumanApproval = (paymentRequired, acceptance, signal, executionToke
       handleAbort()
       return
     }
-
     addTraceEvent('Human approval required')
   })
 }
 
-const executeGateH3A = async (_input, options = {}) => {
-  addTraceEvent(`WebMCP tool invoked: ${TOOL_NAME}`)
+const updateRendezvousUi = (snapshot) => {
+  if (!rendezvousRegion || !rendezvousState || !rendezvousChallenge || !rendezvousExpiry) return
+  rendezvousRegion.hidden = snapshot.state === 'idle'
+  rendezvousRegion.dataset.rendezvousState = snapshot.state
+  rendezvousState.textContent = snapshot.state
+  rendezvousChallenge.textContent = snapshot.challengeId ?? 'Not created'
+  rendezvousExpiry.textContent = snapshot.expiresAt === null
+    ? 'Not scheduled'
+    : new Date(snapshot.expiresAt * 1_000).toLocaleTimeString()
+}
+
+const h3cBridge = createH3CBridge({ addTraceEvent, onStateChange: updateRendezvousUi })
+
+const executeResourceTool = async (input, options = {}) => {
+  requireEmptyInput(input)
+  addTraceEvent(`WebMCP tool invoked: ${RESOURCE_TOOL_NAME}`)
 
   if (pendingApproval !== null) {
     const error = new Error('An approval decision is already pending.')
     addTraceEvent(`Tool execution failed: ${error.message}`, 'error')
     throw error
   }
-
   if (activeExecution !== null) {
-    const error = new Error('A Gate H3A tool invocation is already active.')
+    const error = new Error('A Gate H3C tool invocation is already active.')
+    addTraceEvent(`Tool execution failed: ${error.message}`, 'error')
+    throw error
+  }
+  if (h3cBridge.hasLiveRendezvous()) {
+    const error = new Error('An H3C authorization rendezvous is already pending.')
     addTraceEvent(`Tool execution failed: ${error.message}`, 'error')
     throw error
   }
 
-  const executionToken = Symbol('gate-h3a-execution')
+  const executionToken = Symbol('gate-h3c-execution')
   activeExecution = executionToken
-
   try {
     resetApprovalSurface()
     requireValidAbortSignal(options.signal)
 
-    const fetchOptions = {
-      cache: 'no-store',
-      redirect: 'error'
-    }
+    const fetchOptions = { cache: 'no-store', redirect: 'error' }
     if (options.signal) fetchOptions.signal = options.signal
-
     const response = await fetch(LIVE_RESOURCE_URL, fetchOptions)
-
     if (response.status !== 402) {
       throw new Error(`Expected HTTP 402 Payment Required; received HTTP ${response.status}`)
     }
-
     addTraceEvent('← HTTP 402 Payment Required', 'success')
 
     const encodedHeader = response.headers.get('PAYMENT-REQUIRED')
     if (!encodedHeader) throw new Error('PAYMENT-REQUIRED response header is missing')
-
-    const paymentRequired = decodePaymentRequired(encodedHeader)
+    const paymentRequired = decodePaymentRequiredHeader(encodedHeader)
     const acceptance = validatePaymentRequired(paymentRequired)
-
     addTraceEvent('PAYMENT-REQUIRED header decoded & validated', 'success')
     addTraceEvent(`Price: ${acceptance.extra.displayAmount}`, 'success')
 
+    let handoffPromise = null
     const decision = await requestHumanApproval(
       paymentRequired,
       acceptance,
       options.signal,
-      executionToken
+      executionToken,
+      () => {
+        addTraceEvent('Human decision: APPROVED')
+        handoffPromise = h3cBridge.startHandoff({ paymentRequired, signal: options.signal })
+      }
     )
 
     if (decision === 'rejected') {
       addTraceEvent('Human decision: REJECTED')
       addTraceEvent('STOP - Payment not authorized')
-
       return {
         status: 'payment_rejected',
         gate: 'H3A',
@@ -375,38 +329,12 @@ const executeGateH3A = async (_input, options = {}) => {
           required_amount: acceptance.extra.displayAmount,
           approved: false
         },
-        payment: {
-          performed: false
-        }
+        payment: { performed: false }
       }
     }
-
-    if (decision !== 'approved') {
-      throw new Error('Gate H3A produced an invalid approval decision')
-    }
-
-    addTraceEvent('Human decision: APPROVED')
-    addTraceEvent(`Approval recorded: ${acceptance.extra.displayAmount}`)
-    addTraceEvent('STOP - Awaiting Tonalli signing integration (Gate H3B)')
-
-    return {
-      status: 'payment_approved',
-      gate: 'H3A',
-      httpStatus: 402,
-      message: 'The human approved proceeding toward a 100 XEC payment. No signing or payment was performed.',
-      approval: {
-        network: acceptance.network,
-        asset: acceptance.asset,
-        required_amount: acceptance.extra.displayAmount,
-        atomic_amount: acceptance.amount,
-        payTo: acceptance.payTo,
-        approved: true
-      },
-      payment: {
-        performed: false
-      },
-      nextGate: 'H3B'
-    }
+    if (decision !== 'approved') throw new Error('Gate H3A produced an invalid approval decision')
+    if (!handoffPromise) throw new Error('Gate H3C handoff did not start from the approval gesture')
+    return await handoffPromise
   } catch (error) {
     addTraceEvent(`Tool execution failed: ${errorMessage(error)}`, 'error')
     throw error
@@ -415,46 +343,193 @@ const executeGateH3A = async (_input, options = {}) => {
   }
 }
 
-const registerGateH3ATool = async () => {
+const executeResultTool = (input) => {
+  requireEmptyInput(input)
+  addTraceEvent(`WebMCP tool invoked: ${RESULT_TOOL_NAME}`)
+  try {
+    return h3cBridge.readResult()
+  } catch (error) {
+    addTraceEvent(`Authorization result unavailable: ${errorMessage(error)}`, 'error')
+    throw error
+  }
+}
+
+const emptyInputSchema = Object.freeze({
+  type: 'object',
+  properties: {},
+  additionalProperties: false
+})
+
+const registerH3CTools = async () => {
   try {
     if (!document.modelContext || typeof document.modelContext.registerTool !== 'function') {
       setCapabilityState(
         'unavailable',
         'WebMCP unavailable in this browser.',
-        'No tool was registered. Open this page in a WebMCP-aware browser to run Gate H3A.'
+        'No tool was registered. Open this page in a WebMCP-aware browser to run Gate H3C.'
       )
       addTraceEvent('WebMCP unavailable in this browser.', 'unavailable')
       return
     }
 
     await document.modelContext.registerTool({
-      name: TOOL_NAME,
-      description: TOOL_DESCRIPTION,
-      inputSchema: {
-        type: 'object',
-        properties: {},
-        additionalProperties: false
-      },
-      annotations: {
-        readOnlyHint: true
-      },
-      execute: executeGateH3A
+      name: RESULT_TOOL_NAME,
+      description: RESULT_TOOL_DESCRIPTION,
+      inputSchema: emptyInputSchema,
+      annotations: { readOnlyHint: true },
+      execute: executeResultTool
+    })
+    await document.modelContext.registerTool({
+      name: RESOURCE_TOOL_NAME,
+      description: RESOURCE_TOOL_DESCRIPTION,
+      inputSchema: emptyInputSchema,
+      execute: executeResourceTool
     })
 
     setCapabilityState(
       'ready',
-      'WebMCP tool registered.',
-      'Gate H3A is ready to validate the live requirement and request a human decision.'
+      'Two WebMCP tools registered.',
+      'Gate H3C can initiate an authorization-only handoff and later read its ephemeral verified result.'
     )
-    addTraceEvent(`WebMCP tool registered: ${TOOL_NAME}`, 'success')
+    addTraceEvent(`WebMCP tool registered: ${RESOURCE_TOOL_NAME}`, 'success')
+    addTraceEvent(`WebMCP tool registered: ${RESULT_TOOL_NAME}`, 'success')
   } catch (error) {
     setCapabilityState(
       'error',
       'WebMCP tool registration failed.',
-      'No successful registration is being claimed. Review the trace for details.'
+      'No complete H3C registration is being claimed. Review the trace for details.'
     )
     addTraceEvent(`WebMCP tool registration failed: ${errorMessage(error)}`, 'error')
   }
 }
 
-registerGateH3ATool()
+const setCallbackUi = (title, detail, state) => {
+  document.body.dataset.callbackMode = 'true'
+  if (callbackRegion) callbackRegion.hidden = false
+  if (callbackTitle) callbackTitle.textContent = title
+  if (callbackDetail) callbackDetail.textContent = detail
+  callbackRegion?.setAttribute('data-callback-state', state)
+}
+
+const validAck = (message, callback) => {
+  if (!isRecord(message)) return false
+  try {
+    requireExactKeys(message, ['type', 'challengeId', 'accepted', 'verified'], 'H3C callback ACK')
+  } catch {
+    return false
+  }
+  if (
+    message.type !== 'h3c-ack' ||
+    message.challengeId !== callback.challengeId ||
+    typeof message.accepted !== 'boolean' ||
+    typeof message.verified !== 'boolean'
+  ) return false
+  if (!message.accepted && message.verified) return false
+  if (callback.status === 'invalid') return !message.accepted && !message.verified
+  if (message.accepted && callback.status === 'signed' && !message.verified) return false
+  if (message.accepted && callback.status === 'rejected' && message.verified) return false
+  return true
+}
+
+const runCallbackMode = (capture) => {
+  if (!callbackRegion || !callbackTitle || !callbackDetail) {
+    document.body.textContent = 'No active H3C session accepted this callback.'
+    return
+  }
+  setCallbackUi(
+    'Returning Tonalli authorization result…',
+    'Looking for the active, challenge-bound x402eCash session.',
+    'delivering'
+  )
+  callbackClose?.addEventListener('click', () => window.close(), { once: true })
+
+  if (!capture.callback) {
+    setCallbackUi(
+      'Authorization result was not accepted.',
+      'No active H3C session accepted this callback.',
+      'failed'
+    )
+    return
+  }
+  if (typeof BroadcastChannel !== 'function') {
+    setCallbackUi(
+      'Authorization result was not accepted.',
+      'BroadcastChannel is unavailable. No active H3C session accepted this callback.',
+      'failed'
+    )
+    return
+  }
+
+  const callback = capture.callback
+  let channel
+  let settled = false
+  let timeout = null
+  const finish = (accepted) => {
+    if (settled) return
+    settled = true
+    if (timeout !== null) clearTimeout(timeout)
+    try { channel.close() } catch {}
+    if (accepted) {
+      setCallbackUi(
+        'Authorization result delivered.',
+        'Authorization result delivered to active x402eCash session.',
+        'delivered'
+      )
+      return
+    }
+    setCallbackUi(
+      'Authorization result was not accepted.',
+      'No active H3C session accepted this callback.',
+      'failed'
+    )
+  }
+
+  try {
+    channel = new BroadcastChannel(h3cChannelName(callback.challengeId))
+    channel.onmessage = (event) => {
+      if (!validAck(event.data, callback)) return
+      finish(event.data.accepted)
+    }
+    timeout = setTimeout(() => finish(false), H3C_CALLBACK_ACK_TIMEOUT_MS)
+    channel.postMessage({
+      type: 'h3c-callback',
+      challengeId: callback.challengeId,
+      status: callback.status,
+      ...(callback.status === 'signed' ? { proof: callback.proof } : {})
+    })
+  } catch {
+    if (timeout !== null) clearTimeout(timeout)
+    try { channel?.close() } catch {}
+    setCallbackUi(
+      'Authorization result was not accepted.',
+      'No active H3C session accepted this callback.',
+      'failed'
+    )
+  }
+}
+
+const parseCallbackCapture = (callbackLocation) => {
+  if (callbackLocation === null) return null
+  requireExactKeys(callbackLocation, ['hash', 'search'], 'H3C callback location')
+  let callback = null
+  let error = null
+  let failureChallenge = null
+  try {
+    callback = parseH3BCallback(callbackLocation)
+  } catch (caught) {
+    error = caught
+    try {
+      failureChallenge = recoverH3BCallbackChallenge(callbackLocation)
+    } catch {}
+  }
+  if (!callback && failureChallenge) {
+    callback = Object.freeze({ status: 'invalid', challengeId: failureChallenge })
+  }
+  return Object.freeze({ callback, error })
+}
+
+export const initializeWebMcp = (callbackLocation = null) => {
+  const callbackCapture = parseCallbackCapture(callbackLocation)
+  if (callbackCapture) runCallbackMode(callbackCapture)
+  else void registerH3CTools()
+}

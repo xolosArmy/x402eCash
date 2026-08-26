@@ -169,6 +169,79 @@
   display: none;
 }
 
+.callback-section[hidden],
+.rendezvous-section[hidden] {
+  display: none;
+}
+
+.experiment-page[data-callback-mode="true"] .skip-link,
+.experiment-page[data-callback-mode="true"] .site-header,
+.experiment-page[data-callback-mode="true"] main > :not(.callback-section),
+.experiment-page[data-callback-mode="true"] .site-footer {
+  display: none;
+}
+
+.callback-section,
+.handoff-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: clamp(1.25rem, 5vw, 4rem) 0;
+}
+
+.callback-shell {
+  width: 100%;
+}
+
+.callback-card,
+.handoff-card {
+  width: min(100%, 760px);
+  margin: 0 auto;
+  border: 1px solid rgba(50, 200, 255, 0.38);
+  border-radius: 24px;
+  background:
+    linear-gradient(145deg, rgba(50, 200, 255, 0.08), rgba(255, 200, 87, 0.05)),
+    rgba(8, 11, 17, 0.97);
+  padding: clamp(1.5rem, 5vw, 3rem);
+  box-shadow: var(--shadow);
+}
+
+.callback-card h1,
+.handoff-card h1 {
+  margin: 0.65rem 0 1rem;
+  font-size: clamp(1.8rem, 5vw, 3.3rem);
+}
+
+.callback-card > p:not(.section-kicker),
+.handoff-card > p:not(.section-kicker) {
+  color: var(--muted);
+}
+
+.callback-card .button {
+  margin-top: 1.25rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.callback-section[data-callback-state="delivered"] .callback-card,
+.handoff-page[data-handoff-state="opening"] .handoff-card {
+  border-color: rgba(88, 214, 141, 0.58);
+}
+
+.callback-section[data-callback-state="failed"] .callback-card,
+.handoff-page[data-handoff-state="failed"] .handoff-card {
+  border-color: rgba(255, 107, 107, 0.58);
+}
+
+.handoff-shell {
+  width: min(100% - 2rem, var(--max));
+  margin: 0 auto;
+}
+
+.handoff-card img {
+  margin-bottom: 1.2rem;
+}
+
 .approval-section {
   padding-top: clamp(3.5rem, 7vw, 6rem);
   padding-bottom: clamp(3.5rem, 7vw, 6rem);
@@ -282,6 +355,74 @@
   font: 700 0.82rem/1.55 "SFMono-Regular", Consolas, monospace;
 }
 
+.rendezvous-section {
+  padding-top: clamp(2.5rem, 5vw, 4.5rem);
+  padding-bottom: clamp(2.5rem, 5vw, 4.5rem);
+}
+
+.rendezvous-card {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(320px, 1.2fr);
+  gap: clamp(1.5rem, 5vw, 4rem);
+  border: 1px solid rgba(50, 200, 255, 0.34);
+  border-radius: 24px;
+  background: rgba(8, 11, 17, 0.92);
+  padding: clamp(1.4rem, 4vw, 2.4rem);
+}
+
+.rendezvous-card h2 {
+  margin: 0.55rem 0 0.8rem;
+  font-size: clamp(1.5rem, 4vw, 2.35rem);
+}
+
+.rendezvous-card p:last-child {
+  margin: 0;
+  color: var(--muted);
+}
+
+.rendezvous-details {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.rendezvous-details div {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.35fr) minmax(0, 1fr);
+  gap: 1rem;
+  border-bottom: 1px solid var(--line);
+  padding: 0.9rem 1rem;
+}
+
+.rendezvous-details div:last-child {
+  border-bottom: 0;
+}
+
+.rendezvous-details dt {
+  color: var(--faint);
+  font-size: 0.7rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rendezvous-details dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.rendezvous-section[data-rendezvous-state="verified"] .rendezvous-card {
+  border-color: rgba(88, 214, 141, 0.58);
+}
+
+.rendezvous-section[data-rendezvous-state="failed"] .rendezvous-card,
+.rendezvous-section[data-rendezvous-state="expired"] .rendezvous-card,
+.rendezvous-section[data-rendezvous-state="rejected"] .rendezvous-card {
+  border-color: rgba(255, 107, 107, 0.52);
+}
+
 .trace-section {
   padding-top: clamp(3.5rem, 7vw, 6rem);
   padding-bottom: clamp(3.5rem, 7vw, 6rem);
@@ -386,6 +527,10 @@
 
   .capability-panel {
     max-width: 620px;
+  }
+
+  .rendezvous-card {
+    grid-template-columns: 1fr;
   }
 }
 

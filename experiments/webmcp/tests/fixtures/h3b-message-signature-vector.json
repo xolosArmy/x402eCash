@@ -1,0 +1,15 @@
+{
+  "source": "Canonical Tonalli H3B signMsg primitive at RMZWallet e92981840b30f0b9a70d2519c1264c09e22f04ab",
+  "library": "ecash-lib 4.5.2",
+  "algorithm": "secp256k1 ECDSA recoverable compact message signature",
+  "messagePrefix": "\\u0016eCash Signed Message:\\n",
+  "prehash": "double-SHA-256(prefix bytes + CompactSize(UTF-8 message length) + UTF-8 message)",
+  "signatureEncoding": "canonical standard Base64 of a 65-byte compact recoverable signature",
+  "publicKeyFormat": "33-byte compressed secp256k1 lowercase hex",
+  "testKeyPolicy": "Non-funded deterministic test vector; no private key is included in this repository.",
+  "publicKey": "031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f",
+  "payer": "ecash:qpumqqygwcnt999fz3gp5nxjy66ckg6esvxaqmtclv",
+  "messageHashHex": "7b40f18d4882cfa5917976ee94efeb5b333241fe3ddf27ed206d6a90f446827a",
+  "message": "TONALLI_X402_H3B_AUTHORIZATION_PROOF_V1\n{\"amount\":\"10000\",\"asset\":\"XEC\",\"broadcasted\":false,\"challengeId\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\",\"displayAmount\":\"100 XEC\",\"expiresAt\":1800000240,\"gate\":\"H3B\",\"issuedAt\":1800000000,\"mode\":\"authorization-dry-run\",\"network\":\"xec:mainnet\",\"payTo\":\"ecash:qqg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyquz9y96w\",\"payer\":\"ecash:qpumqqygwcnt999fz3gp5nxjy66ckg6esvxaqmtclv\",\"paymentPerformed\":false,\"paymentRequiredSha256\":\"d865139386538ad3fddaa400d95c4074333cd52fdbbf8c1c6d42984fe214d793\",\"publicKey\":\"031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f\",\"resourceUrl\":\"https://api.x402.ecash.mx/v1/resource/demo\",\"scheme\":\"xec-prepaid-utxo\",\"sourceOrigin\":\"https://x402.ecash.mx\",\"transactionCreated\":false,\"type\":\"tonalli-x402-authorization-proof\",\"version\":1,\"x402Version\":2}",
+  "signature": "IJOAUKcf/NFDN/vONVEBpv6NZTUuj1b3WJ9OO7Cf8DRpWHpCJOxGsFhReaukq3xPErJp1qCkhkJUt1IjjNXxLNE="
+}
