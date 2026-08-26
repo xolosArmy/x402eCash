@@ -165,6 +165,123 @@
   text-align: right;
 }
 
+.approval-section[hidden] {
+  display: none;
+}
+
+.approval-section {
+  padding-top: clamp(3.5rem, 7vw, 6rem);
+  padding-bottom: clamp(3.5rem, 7vw, 6rem);
+}
+
+.approval-card {
+  border: 1px solid rgba(255, 200, 87, 0.45);
+  border-radius: 24px;
+  background:
+    linear-gradient(135deg, rgba(255, 200, 87, 0.09), rgba(50, 200, 255, 0.06)),
+    rgba(8, 11, 17, 0.97);
+  padding: clamp(1.4rem, 4vw, 2.5rem);
+  box-shadow: var(--shadow);
+}
+
+.approval-card:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 4px;
+}
+
+.approval-card[data-approval-state="approved"] {
+  border-color: rgba(88, 214, 141, 0.6);
+}
+
+.approval-card[data-approval-state="rejected"],
+.approval-card[data-approval-state="cancelled"] {
+  border-color: rgba(255, 107, 107, 0.58);
+}
+
+.approval-header {
+  max-width: 800px;
+}
+
+.approval-header .section-kicker {
+  margin-bottom: 0.55rem;
+}
+
+.approval-header h2 {
+  margin-bottom: 0.8rem;
+  font-size: clamp(1.65rem, 4vw, 2.7rem);
+}
+
+.approval-header p:last-child {
+  margin: 0;
+  color: var(--muted);
+}
+
+.approval-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  margin: 1.8rem 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--line);
+}
+
+.approval-details div {
+  min-width: 0;
+  background: rgba(9, 13, 19, 0.98);
+  padding: 1rem;
+}
+
+.approval-details .approval-destination {
+  grid-column: span 2;
+}
+
+.approval-details dt {
+  margin-bottom: 0.35rem;
+  color: var(--faint);
+  font-size: 0.7rem;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.approval-details dd {
+  margin: 0;
+  color: var(--text);
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+}
+
+.approval-actions .button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.approval-actions .button:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 3px;
+}
+
+.approval-actions .button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.6);
+  opacity: 0.55;
+  transform: none;
+}
+
+.approval-status {
+  margin: 1rem 0 0;
+  color: var(--muted);
+  font: 700 0.82rem/1.55 "SFMono-Regular", Consolas, monospace;
+}
+
 .trace-section {
   padding-top: clamp(3.5rem, 7vw, 6rem);
   padding-bottom: clamp(3.5rem, 7vw, 6rem);
@@ -292,6 +409,22 @@
 
   .trace-mode {
     align-self: flex-start;
+  }
+
+  .approval-details {
+    grid-template-columns: 1fr;
+  }
+
+  .approval-details .approval-destination {
+    grid-column: auto;
+  }
+
+  .approval-actions {
+    flex-direction: column;
+  }
+
+  .approval-actions .button {
+    width: 100%;
   }
 }
 
