@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gate H1 — WebMCP Discovery | x402eCash</title>
+  <meta name="description" content="A static, read-only WebMCP experiment that retrieves a deterministic same-origin mock resource without performing a payment.">
+  <meta name="theme-color" content="#07090d">
+  <meta name="color-scheme" content="dark">
+  <link rel="canonical" href="https://x402.ecash.mx/experiments/webmcp/">
+  <link rel="icon" href="/assets/x402ecash-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="./webmcp.css">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="x402eCash">
+  <meta property="og:url" content="https://x402.ecash.mx/experiments/webmcp/">
+  <meta property="og:title" content="Gate H1 — WebMCP Discovery">
+  <meta property="og:description" content="A truthful mock-mode WebMCP discovery and invocation experiment from x402eCash.">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Gate H1 — WebMCP Discovery">
+  <meta name="twitter:description" content="A truthful mock-mode WebMCP discovery and invocation experiment from x402eCash.">
+</head>
+<body class="experiment-page">
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="/" aria-label="x402eCash home">
+        <img src="/assets/x402ecash-mark.svg" alt="" width="40" height="40">
+        <span><span class="brand-x">x402</span><span class="brand-cash">eCash</span></span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>Menu</button>
+      <nav class="site-nav" id="site-nav" aria-label="Experiment navigation" data-nav>
+        <a href="#overview">Overview</a>
+        <a href="#trace">Trace</a>
+        <a href="#contract">Tool contract</a>
+        <a href="/">Public lab</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="experiment-hero" id="overview" aria-labelledby="gate-title">
+      <div class="container experiment-grid">
+        <div class="experiment-intro">
+          <div class="lab-badge">Static browser experiment</div>
+          <p class="eyebrow">x402eCash · WebMCP Challenge</p>
+          <h1 id="gate-title">Gate H1 — WebMCP Discovery</h1>
+          <p class="hero-subtitle">Discover a read-only browser tool, invoke it, and retrieve a deterministic same-origin fixture.</p>
+          <p class="truth-notice"><strong>Mock mode</strong> — no payment, wallet, blockchain transaction, or XEC settlement occurs in this gate.</p>
+
+          <div class="experiment-path" aria-label="Gate H1 target execution path">
+            <span>Agent discovers tool</span>
+            <span aria-hidden="true">→</span>
+            <span>Tool fetches fixture</span>
+            <span aria-hidden="true">→</span>
+            <span>Structured mock result</span>
+          </div>
+
+          <p class="agent-prompt">In a WebMCP-aware browser, ask the agent to invoke <code>get_paid_xec_resource</code>. The live trace will record registration, invocation, and the successful fixture response only as each event occurs.</p>
+        </div>
+
+        <aside class="capability-panel" aria-labelledby="capability-title">
+          <p class="console-label" id="capability-title">Browser capability</p>
+          <div class="capability-state" data-webmcp-state="checking">
+            <span class="capability-light" aria-hidden="true"></span>
+            <div>
+              <strong data-webmcp-status>Checking WebMCP support…</strong>
+              <p data-webmcp-detail>The page has not registered a tool yet.</p>
+            </div>
+          </div>
+          <dl class="capability-facts">
+            <div><dt>Tool</dt><dd><code>get_paid_xec_resource</code></dd></div>
+            <div><dt>Access</dt><dd>Read only</dd></div>
+            <div><dt>Resource</dt><dd><code>./mock-resource.json</code></dd></div>
+            <div><dt>Persistence</dt><dd>None</dd></div>
+          </dl>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section section-border trace-section" id="trace" aria-labelledby="trace-title">
+      <div class="container">
+        <div class="trace-panel">
+          <div class="trace-header">
+            <div>
+              <p class="section-kicker">Live browser events</p>
+              <h2 id="trace-title">AGENT ECONOMY TRACE</h2>
+            </div>
+            <span class="trace-mode">DISPLAY ONLY</span>
+          </div>
+          <ol class="trace-log" data-trace-log aria-live="polite" aria-relevant="additions">
+            <li class="trace-placeholder" data-trace-placeholder>Waiting for WebMCP capability check…</li>
+          </ol>
+          <p class="trace-note">Runtime events stay in this page only. They are not persisted or sent to analytics.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-border" id="contract" aria-labelledby="contract-title">
+      <div class="container">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Gate contract</p>
+            <h2 id="contract-title">One deterministic read.</h2>
+          </div>
+          <p>The tool accepts an empty object, fetches a local JSON fixture, requires a successful response, validates the mock fields, and returns the result to the invoking agent.</p>
+        </div>
+
+        <div class="grid-3 gate-grid">
+          <article class="card">
+            <span class="card-number">01</span>
+            <h3>Discovery</h3>
+            <p>The page registers one imperative WebMCP tool when the browser exposes the required API.</p>
+          </article>
+          <article class="card">
+            <span class="card-number">02</span>
+            <h3>Same-origin fixture</h3>
+            <p>The tool reads <code>mock-resource.json</code> from this static experiment directory and validates its mock-only status.</p>
+          </article>
+          <article class="card">
+            <span class="card-number">03</span>
+            <h3>Fail visibly</h3>
+            <p>Unavailable capability, registration failure, fetch failure, cancellation, or invalid fixture data is surfaced without inventing success.</p>
+          </article>
+        </div>
+
+        <p class="source-note boundary-copy"><strong>Project boundary:</strong> x402eCash remains the static public laboratory and evidence portal. x402-XEC remains the separate protocol implementation. This experiment does not turn the portal into a payment backend.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <p><strong>Gate H1</strong> demonstrates browser-side tool discovery and deterministic fixture retrieval in mock mode. It does not demonstrate an XEC payment.</p>
+      <div class="footer-links">
+        <a href="/">Public lab</a>
+        <a href="https://github.com/xolosArmy/x402eCash">Repository</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/script.js" defer></script>
+  <script src="./webmcp.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,304 @@
+.experiment-page {
+  background:
+    radial-gradient(circle at 78% 12%, rgba(50, 200, 255, 0.12), transparent 26rem),
+    radial-gradient(circle at 15% 24%, rgba(255, 122, 26, 0.12), transparent 30rem),
+    var(--bg);
+}
+
+.experiment-hero {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(4.5rem, 9vw, 7.5rem) 0 clamp(4rem, 8vw, 6.5rem);
+}
+
+.experiment-hero::after {
+  position: absolute;
+  top: 5rem;
+  right: max(1rem, calc((100vw - var(--max)) / 2));
+  width: min(30vw, 340px);
+  aspect-ratio: 1;
+  border: 1px solid rgba(50, 200, 255, 0.15);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 36px rgba(50, 200, 255, 0.025),
+    0 0 0 72px rgba(255, 200, 87, 0.02);
+  content: "";
+  pointer-events: none;
+}
+
+.experiment-grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+  align-items: center;
+  gap: clamp(2.5rem, 7vw, 6rem);
+}
+
+.experiment-intro h1 {
+  max-width: 880px;
+  margin-bottom: 1.4rem;
+  font-size: clamp(2.8rem, 7vw, 6.4rem);
+}
+
+.truth-notice {
+  max-width: 770px;
+  margin: 1.8rem 0 0;
+  border: 1px solid rgba(255, 200, 87, 0.38);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 200, 87, 0.08);
+  color: #f5dfae;
+  padding: 1rem 1.15rem;
+}
+
+.truth-notice strong {
+  color: var(--gold);
+}
+
+.experiment-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+  color: var(--muted);
+  font: 750 0.78rem "SFMono-Regular", Consolas, monospace;
+}
+
+.experiment-path span:not([aria-hidden]) {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.45rem 0.7rem;
+}
+
+.experiment-path span[aria-hidden] {
+  color: var(--orange);
+}
+
+.agent-prompt {
+  max-width: 760px;
+  margin: 1.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.capability-panel {
+  border: 1px solid var(--line-strong);
+  border-radius: 24px;
+  background: linear-gradient(150deg, rgba(18, 25, 35, 0.96), rgba(8, 11, 17, 0.96));
+  padding: clamp(1.3rem, 3vw, 1.8rem);
+  box-shadow: var(--shadow);
+}
+
+.capability-state {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.8rem;
+  align-items: start;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 1.1rem 0;
+}
+
+.capability-light {
+  width: 0.72rem;
+  height: 0.72rem;
+  margin-top: 0.34rem;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 14px rgba(255, 200, 87, 0.7);
+}
+
+.capability-state[data-webmcp-state="ready"] .capability-light {
+  background: var(--green);
+  box-shadow: 0 0 14px rgba(88, 214, 141, 0.7);
+}
+
+.capability-state[data-webmcp-state="unavailable"] .capability-light,
+.capability-state[data-webmcp-state="error"] .capability-light {
+  background: var(--red);
+  box-shadow: 0 0 14px rgba(255, 107, 107, 0.65);
+}
+
+.capability-state strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.95rem;
+}
+
+.capability-state p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.capability-facts {
+  margin: 0;
+}
+
+.capability-facts div {
+  display: grid;
+  grid-template-columns: 0.7fr 1.3fr;
+  gap: 0.8rem;
+  border-bottom: 1px solid var(--line);
+  padding: 0.75rem 0;
+  font-size: 0.8rem;
+}
+
+.capability-facts div:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.capability-facts dt {
+  color: var(--faint);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.capability-facts dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.trace-section {
+  padding-top: clamp(3.5rem, 7vw, 6rem);
+  padding-bottom: clamp(3.5rem, 7vw, 6rem);
+}
+
+.trace-panel {
+  overflow: hidden;
+  border: 1px solid rgba(50, 200, 255, 0.32);
+  border-radius: 24px;
+  background: rgba(4, 7, 11, 0.94);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 30px 90px rgba(0, 0, 0, 0.4);
+}
+
+.trace-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(90deg, rgba(50, 200, 255, 0.08), rgba(255, 122, 26, 0.04));
+  padding: clamp(1.3rem, 3vw, 2rem);
+}
+
+.trace-header .section-kicker {
+  margin-bottom: 0.55rem;
+}
+
+.trace-header h2 {
+  margin: 0;
+  font: 850 clamp(1.35rem, 3vw, 2rem) "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.04em;
+}
+
+.trace-mode {
+  flex: 0 0 auto;
+  border: 1px solid rgba(50, 200, 255, 0.35);
+  border-radius: 999px;
+  color: #9be7ff;
+  padding: 0.35rem 0.6rem;
+  font: 800 0.65rem "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.08em;
+}
+
+.trace-log {
+  min-height: 190px;
+  margin: 0;
+  padding: clamp(1.3rem, 3vw, 2rem);
+  list-style: none;
+  counter-reset: none;
+}
+
+.trace-log li {
+  color: #d7e0ea;
+  font: 650 0.86rem/1.65 "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.trace-log li + li {
+  margin-top: 0.55rem;
+}
+
+.trace-log li::before {
+  color: var(--blue);
+  content: "> ";
+}
+
+.trace-log li[data-kind="success"] {
+  color: #a4efc2;
+}
+
+.trace-log li[data-kind="error"],
+.trace-log li[data-kind="unavailable"] {
+  color: #ffb1b1;
+}
+
+.trace-placeholder {
+  color: var(--faint) !important;
+}
+
+.trace-note {
+  margin: 0;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  padding: 1rem clamp(1.3rem, 3vw, 2rem);
+  font-size: 0.78rem;
+}
+
+.gate-grid .card {
+  min-height: 230px;
+}
+
+.boundary-copy {
+  margin-top: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .experiment-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .capability-panel {
+    max-width: 620px;
+  }
+}
+
+@media (max-width: 620px) {
+  .experiment-hero {
+    padding-top: 3.5rem;
+  }
+
+  .experiment-path span[aria-hidden] {
+    display: none;
+  }
+
+  .experiment-path span:not([aria-hidden]) {
+    width: 100%;
+    border-radius: var(--radius-sm);
+  }
+
+  .trace-header {
+    flex-direction: column;
+  }
+
+  .trace-mode {
+    align-self: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .experiment-page *,
+  .experiment-page *::before,
+  .experiment-page *::after {
+    scroll-behavior: auto !important;
+  }
+}
