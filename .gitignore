@@ -1,0 +1,2 @@
+# Development-only H3WC build dependencies are never a production asset.
+tooling/h3wc-client/node_modules/

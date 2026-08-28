@@ -1,0 +1,1 @@
+{"chain":"ecash:1","events":[],"globalLock":"tonalli:wc:owner:v1","methods":["ecash_getAccountIdentity","ecash_signMessage"],"requesterOrigin":"https://x402.ecash.mx","storagePurpose":"tonalli-h3wc-v1","version":1,"walletOrigin":"https://app.tonalli.cash"}

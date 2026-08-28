@@ -114,6 +114,23 @@ with H3B deliberately enabled.
 Gate H3C creates no `PAYMENT-SIGNATURE`, transaction, settlement, broadcast,
 Chronik request, protected-resource retry, or XEC transfer.
 
+## H3WC B1 dormant transport candidate
+
+The B1 candidate adds a self-hosted, feature-gated Tonalli Connect adapter for
+the exact read-only identity and authorization-message namespace. It is not
+part of the H3C path and the committed configuration keeps
+`__X402_H3WC_ENABLED__` unset/false, so the adapter is not imported, restored,
+or connected to a relay in the default GitHub Pages build. The adapter is
+generated from the isolated `tooling/h3wc-client/` workspace with pinned
+WalletConnect dependencies; its provenance and license inventory accompany
+the browser module under `experiments/webmcp/vendor/`.
+
+The local QA panel can be enabled only by an uncommitted development browser
+configuration. B1 deliberately stops `ecash_signMessage` at the transport
+boundary and expects the wallet candidate's `H3WC_SIGNING_NOT_ENABLED` error.
+Live relay, multi-tab Web Locks, restore, and human wallet QA remain pending;
+no payment or transaction is enabled by this candidate.
+
 ## Experimental status
 
 x402eCash is an experimental xolosArmy Network research project. The site does

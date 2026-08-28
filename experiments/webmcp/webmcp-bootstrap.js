@@ -1,6 +1,7 @@
 const callbackRegion = document.querySelector('[data-callback-region]')
 const callbackTitle = document.querySelector('[data-callback-title]')
 const callbackDetail = document.querySelector('[data-callback-detail]')
+const H3WC_FLAG_NAME = '__X402_H3WC_ENABLED__'
 
 const isCallbackAttempt = () => (
   /(?:^#|[&#])(?:h3bStatus|challengeId|proof)=/u.test(location.hash) ||
@@ -50,6 +51,18 @@ const start = async () => {
       throw new Error('Gate H3C initializer is unavailable')
     }
     module.initializeWebMcp(callbackLocation)
+
+    // H3WC is a dormant alternative transport.  It is not imported or
+    // evaluated in the committed/default configuration.  A reviewer may set
+    // this explicit local-only flag before page load for human QA.
+    if (globalThis[H3WC_FLAG_NAME] === true && !callbackLocation) {
+      try {
+        const h3wc = await import('./h3wc-client.js')
+        await h3wc.mountH3wcQaPanel()
+      } catch (error) {
+        console.error('[H3WC] local QA transport remained disabled:', error)
+      }
+    }
   } catch {
     showBootstrapFailure(
       callbackLocation
